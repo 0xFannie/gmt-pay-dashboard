@@ -792,7 +792,7 @@ cache_file = 'chain_data_cache.csv'
 if os.path.exists(cache_file):
     cache_age = (datetime.now().timestamp() - os.path.getmtime(cache_file)) / 60
     if lang == 'zh':
-        st.sidebar.info(f"📊 数据状态\n\n缓存时间: {cache_age:.1f} 分钟前\n\n总记录: {len(df)} 条")
+    st.sidebar.info(f"📊 数据状态\n\n缓存时间: {cache_age:.1f} 分钟前\n\n总记录: {len(df)} 条")
     else:
         st.sidebar.info(f"📊 Data Status\n\nCached: {cache_age:.1f} min ago\n\nTotal records: {len(df)}")
 
@@ -906,10 +906,137 @@ with col5:
     avg_fee_pct = df_filtered['Fee_Percentage'].mean()
     st.metric(get_text('avg_fee_rate', lang), f"{avg_fee_pct:.2f}%")
 
+# 数据说明
+if lang == 'zh':
+    st.info("""
+    **💡 关于开卡数量的说明**
+    
+    此处显示的开卡数量是基于**链上支付成功**的交易统计。如果BANO系统（卡片供应商）显示的开卡数量小于此处数据，这是正常现象。
+    
+    **原因：** 存在用户链上付款成功但业务系统开卡失败的情况，这些订单通常正在客服处理流程中。
+    
+    **常见失败原因：**
+    - GMT Pay产品系统异常
+    - BANO系统服务错误
+    - 其他技术问题
+    
+    ⚠️ 链上数据 ≥ BANO系统开卡数 为正常情况
+    """)
+else:
+    st.info("""
+    **💡 About Card Issuance Count**
+    
+    The card count shown here is based on **successful on-chain payments**. If BANO system (card supplier) shows fewer cards than this data, it's normal.
+    
+    **Reason:** Some users' payments succeed on-chain but card issuance fails in the business system. These orders are typically being handled by customer service.
+    
+    **Common failure reasons:**
+    - GMT Pay product system issues
+    - BANO system service errors
+    - Other technical problems
+    
+    ⚠️ On-chain data ≥ BANO system count is expected
+    """)
+
+st.markdown("---")
+
+# 📑 目录导航
+if lang == 'zh':
+    toc_title = "📑 分析模块导航"
+    toc_items = [
+        ("🌐 各链销售概览", "#1"),
+        ("💳 卡面值分析", "#2"),
+        ("💰 代币使用分析", "#3"),
+        ("💸 手续费分析", "#4"),
+        ("🎖️ NFT持有者折扣分析", "#5"),
+        ("💵 卡片注销返还GGUSD分析", "#refund"),
+        ("📋 原始交易数据", "#6")
+    ]
+else:
+    toc_title = "📑 Analysis Modules"
+    toc_items = [
+        ("🌐 Chain Sales Overview", "#1"),
+        ("💳 Card Value Analysis", "#2"),
+        ("💰 Token Usage Analysis", "#3"),
+        ("💸 Fee Analysis", "#4"),
+        ("🎖️ NFT Holder Discount Analysis", "#5"),
+        ("💵 Card Cancellation Refund Analysis", "#refund"),
+        ("📋 Raw Transaction Data", "#6")
+    ]
+
+toc_html = f"""
+<div style="background: white; 
+            border: 2px solid #e2e8f0; 
+            border-radius: 16px; 
+            padding: 24px 32px; 
+            margin-bottom: 32px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+    <h3 style="color: #0f172a; font-size: 1.25rem; font-weight: 700; margin: 0 0 20px 0; 
+               display: flex; align-items: center;">
+        {toc_title}
+    </h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;">
+"""
+
+for item_text, item_id in toc_items:
+    toc_html += f"""
+        <a href="{item_id}" style="text-decoration: none;">
+            <div style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+                        border: 1px solid #e2e8f0;
+                        border-radius: 10px;
+                        padding: 14px 18px;
+                        transition: all 0.2s ease;
+                        cursor: pointer;
+                        color: #334155;
+                        font-weight: 500;
+                        font-size: 0.95rem;"
+                 onmouseover="this.style.background='linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)'; 
+                             this.style.color='white'; 
+                             this.style.borderColor='#3b82f6'; 
+                             this.style.transform='translateY(-2px)';
+                             this.style.boxShadow='0 4px 12px rgba(59, 130, 246, 0.3)';"
+                 onmouseout="this.style.background='linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)'; 
+                            this.style.color='#334155'; 
+                            this.style.borderColor='#e2e8f0';
+                            this.style.transform='translateY(0)';
+                            this.style.boxShadow='none';">
+                {item_text}
+            </div>
+        </a>
+    """
+
+toc_html += """
+    </div>
+</div>
+"""
+
+st.markdown(toc_html, unsafe_allow_html=True)
+
 st.markdown("---")
 
 # 1. 各链销售概览
+st.markdown('<div id="1"></div>', unsafe_allow_html=True)
 st.header(get_text('chain_overview', lang))
+
+# 动态洞察摘要
+chain_leader = df_filtered.groupby('Chain').size().idxmax()
+chain_leader_pct = df_filtered.groupby('Chain').size().max() / len(df_filtered) * 100
+total_chains = df_filtered['Chain'].nunique()
+
+if lang == 'zh':
+    st.markdown(f"""
+    **📊 数据摘要与洞察**  
+    共有 **{total_chains}** 条链产生销售。**{chain_leader}** 是销售主力，占总销量的 **{chain_leader_pct:.1f}%**。
+    多链布局有效分散了风险，不同链的用户偏好为产品优化提供了方向。
+    """)
+else:
+    st.markdown(f"""
+    **📊 Data Summary & Insights**  
+    **{total_chains}** chains generated sales. **{chain_leader}** leads with **{chain_leader_pct:.1f}%** of total sales.
+    Multi-chain strategy effectively diversifies risk, and user preferences across chains provide optimization directions.
+    """)
+
+st.markdown("")
 
 col1, col2 = st.columns(2)
 
@@ -976,7 +1103,7 @@ chain_stats = df_filtered.groupby('Chain').agg({
 }).round(2)
 
 if lang == 'zh':
-    chain_stats.columns = ['卡片数量', '卡片总面值', '实际收入', '手续费收入', '平均手续费率(%)']
+chain_stats.columns = ['卡片数量', '卡片总面值', '实际收入', '手续费收入', '平均手续费率(%)']
 else:
     chain_stats.columns = ['Card Count', 'Card Value Sum', 'Actual Revenue', 'Fee Income', 'Avg Fee Rate(%)']
 chain_stats = chain_stats.sort_values(chain_stats.columns[0], ascending=False)
@@ -1027,7 +1154,29 @@ st.plotly_chart(fig_daily, use_container_width=True)
 st.markdown("---")
 
 # 2. 卡片面值分析
+st.markdown('<div id="2"></div>', unsafe_allow_html=True)
 st.header(get_text('card_value_analysis', lang))
+
+# 动态洞察摘要
+popular_value = df_filtered.groupby('Card_Value').size().idxmax()
+popular_value_count = df_filtered.groupby('Card_Value').size().max()
+popular_value_pct = popular_value_count / len(df_filtered) * 100
+value_types = df_filtered['Card_Value'].nunique()
+
+if lang == 'zh':
+    st.markdown(f"""
+    **📊 数据摘要与洞察**  
+    共有 **{value_types}** 种面值卡片。**${popular_value:.0f}** 面值最受欢迎，售出 **{popular_value_count}** 张（占 **{popular_value_pct:.1f}%**）。
+    用户偏好集中在中等面值，说明产品定价策略有效，满足了主流用户需求。
+    """)
+else:
+    st.markdown(f"""
+    **📊 Data Summary & Insights**  
+    **{value_types}** card denominations available. **${popular_value:.0f}** is most popular with **{popular_value_count}** cards (**{popular_value_pct:.1f}%**).
+    User preference for mid-range values indicates effective pricing strategy aligned with mainstream demand.
+    """)
+
+st.markdown("")
 
 col1, col2 = st.columns(2)
 
@@ -1098,9 +1247,30 @@ st.plotly_chart(fig_heatmap, use_container_width=True)
 st.markdown("---")
 
 # 3. 支付代币分析
+st.markdown('<div id="3"></div>', unsafe_allow_html=True)
 st.header(get_text('asset_analysis', lang))
 
+# 动态洞察摘要
 df_target_assets = df_filtered[df_filtered['Asset'].isin(SUPPORTED_TOKENS)]
+if not df_target_assets.empty:
+    top_token = df_target_assets.groupby('Asset').size().idxmax()
+    top_token_pct = df_target_assets.groupby('Asset').size().max() / len(df_target_assets) * 100
+    tokens_used = df_target_assets['Asset'].nunique()
+    
+    if lang == 'zh':
+        st.markdown(f"""
+        **📊 数据摘要与洞察**  
+        用户使用了 **{tokens_used}** 种代币支付。**{top_token}** 是首选支付方式，占 **{top_token_pct:.1f}%**。
+        代币使用分布反映了用户资产持有偏好，为流动性管理和代币支持策略提供依据。
+        """)
+    else:
+        st.markdown(f"""
+        **📊 Data Summary & Insights**  
+        Users paid with **{tokens_used}** different tokens. **{top_token}** is preferred at **{top_token_pct:.1f}%**.
+        Token usage distribution reflects user asset holdings and informs liquidity management strategy.
+        """)
+    
+    st.markdown("")
 
 col1, col2, col3 = st.columns(3)
 
@@ -1226,7 +1396,28 @@ with tab2:
 st.markdown("---")
 
 # 4. 手续费分析
+st.markdown('<div id="4"></div>', unsafe_allow_html=True)
 st.header(get_text('fee_analysis', lang))
+
+# 动态洞察摘要
+total_fees_sum = df_filtered['Fee'].sum()
+avg_fee = df_filtered['Fee'].mean()
+avg_fee_rate = df_filtered['Fee_Percentage'].mean()
+
+if lang == 'zh':
+    st.markdown(f"""
+    **📊 数据摘要与洞察**  
+    累计手续费收入 **${total_fees_sum:,.2f}**，平均每笔 **${avg_fee:.2f}**，平均费率 **{avg_fee_rate:.2f}%**。
+    手续费结构设计合理，在维持竞争力的同时保证了可持续的商业模式。不同面值的费率差异体现了规模效应。
+    """)
+else:
+    st.markdown(f"""
+    **📊 Data Summary & Insights**  
+    Total fee revenue **${total_fees_sum:,.2f}**, average **${avg_fee:.2f}** per transaction, avg rate **{avg_fee_rate:.2f}%**.
+    Fee structure balances competitiveness with sustainable business model. Rate variations across denominations reflect economies of scale.
+    """)
+
+st.markdown("")
 
 col1, col2 = st.columns(2)
 
@@ -1306,10 +1497,39 @@ with col2:
 st.markdown("---")
 
 # 5. NFT持有者折扣分析
+st.markdown('<div id="5"></div>', unsafe_allow_html=True)
 st.header(get_text('vip_analysis', lang))
 
 # 加载VIP分析数据
 df_vip = load_vip_analysis()
+
+# 动态洞察摘要（在数据加载后添加）
+if df_vip is not None and len(df_vip) > 0:
+    activity_start_temp = pd.to_datetime('2025-07-21')
+    df_vip_after_temp = df_vip[df_vip['After_2025-07-21'] == True]
+    purchased_users_temp = df_vip['Wallet'].nunique()
+    total_cards_temp = len(df_vip)
+    
+    if len(df_vip_after_temp) > 0:
+        enjoyed_count_temp = len(df_vip_after_temp[df_vip_after_temp['Status'] == '✅已享受'])
+        discount_rate_temp = enjoyed_count_temp / len(df_vip_after_temp) * 100
+    else:
+        discount_rate_temp = 0
+    
+    if lang == 'zh':
+        st.markdown(f"""
+        **📊 数据摘要与洞察**  
+        共有 **{purchased_users_temp}** 名NFT持有者购买了 **{total_cards_temp}** 张卡片。活动启动后，**{discount_rate_temp:.1f}%** 的交易成功享受了折扣。
+        VIP用户激活率体现了社区忠诚度，折扣政策有效促进了高价值用户的复购。未享受折扣的订单需关注技术实现和用户体验。
+        """)
+    else:
+        st.markdown(f"""
+        **📊 Data Summary & Insights**  
+        **{purchased_users_temp}** NFT holders purchased **{total_cards_temp}** cards. Post-launch, **{discount_rate_temp:.1f}%** transactions received discounts.
+        VIP activation rate reflects community loyalty. Discount policy effectively drives repeat purchases. Non-discounted orders warrant technical and UX review.
+        """)
+    
+    st.markdown("")
 
 if df_vip is not None and len(df_vip) > 0:
     # 活动开始日期
@@ -1519,12 +1739,29 @@ else:
 st.markdown("---")
 
 # 6. 原始交易数据
+st.markdown('<div id="6"></div>', unsafe_allow_html=True)
 st.header(get_text('raw_transaction_data', lang))
+
+# 动态洞察摘要
+if lang == 'zh':
+    st.markdown(f"""
+    **📊 数据摘要与洞察**  
+    下方展示了所有链上交易的原始数据，包括交易哈希、时间戳、钱包地址、支付代币等详细信息。
+    原始数据支持导出和审计，确保业务透明度和可追溯性，为客服、财务对账和合规审查提供可靠依据。
+    """)
+else:
+    st.markdown(f"""
+    **📊 Data Summary & Insights**  
+    Raw on-chain transaction data is displayed below, including transaction hashes, timestamps, wallet addresses, payment tokens, and more.
+    Raw data supports export and audit, ensuring business transparency and traceability for customer service, financial reconciliation, and compliance review.
+    """)
+
+st.markdown("")
 
 # 格式化显示
 df_display = df_filtered[['DateTime', 'Chain', 'Card_Value', 'Amount', 'Fee', 'Fee_Percentage', 'Asset', 'TxHash']].copy()
 if lang == 'zh':
-    df_display.columns = ['时间', '链', '卡片面值(USD)', '实付金额(USD)', '手续费(USD)', '手续费率(%)', '支付代币', '交易哈希']
+df_display.columns = ['时间', '链', '卡片面值(USD)', '实付金额(USD)', '手续费(USD)', '手续费率(%)', '支付代币', '交易哈希']
 else:
     df_display.columns = ['DateTime', 'Chain', 'Card Value(USD)', 'Amount(USD)', 'Fee(USD)', 'Fee Rate(%)', 'Asset', 'TxHash']
 df_display = df_display.sort_values(df_display.columns[0], ascending=False)
@@ -1560,6 +1797,7 @@ st.download_button(
 
 # ===== 注销返还数据分析 =====
 st.markdown("---")
+st.markdown('<div id="refund"></div>', unsafe_allow_html=True)
 st.markdown(f"## {get_text('refund_data', lang)}")
 st.markdown(f"""
 <div style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(5, 150, 105, 0.05) 100%);
@@ -1577,6 +1815,27 @@ st.markdown(f"""
 
 # 加载注销返还数据
 df_refund = load_refund_data()
+
+# 动态洞察摘要
+if not df_refund.empty:
+    total_refunds = len(df_refund)
+    total_refund_amount = df_refund['Amount'].sum()
+    avg_refund = df_refund['Amount'].mean()
+    
+    if lang == 'zh':
+        st.markdown(f"""
+        **📊 数据摘要与洞察**  
+        已处理 **{total_refunds}** 笔卡片注销返还，累计返还 **{total_refund_amount:,.2f} GGUSD**，平均每笔 **${avg_refund:.2f}**。
+        GGUSD返还政策降低了用户注销卡片的心理负担，有效提升了用户体验和品牌忠诚度，同时促进了GGUSD代币的流通。
+        """)
+    else:
+        st.markdown(f"""
+        **📊 Data Summary & Insights**  
+        Processed **{total_refunds}** card cancellations, total refund **{total_refund_amount:,.2f} GGUSD**, average **${avg_refund:.2f}** per refund.
+        GGUSD refund policy reduces user friction for card cancellation, enhancing UX and brand loyalty while boosting GGUSD circulation.
+        """)
+    
+    st.markdown("")
 
 if not df_refund.empty:
     # 关键指标
@@ -1696,7 +1955,7 @@ if not df_refund.empty:
         df_refund_display['DateTime'] = df_refund_display['DateTime'].dt.strftime('%Y-%m-%d %H:%M:%S')
         df_refund_display['Amount'] = df_refund_display['Amount'].apply(lambda x: f"${x:.2f}")
         if lang == 'zh':
-            df_refund_display.columns = ['时间', '返还金额 (GGUSD)', '接收地址', '交易哈希']
+        df_refund_display.columns = ['时间', '返还金额 (GGUSD)', '接收地址', '交易哈希']
         else:
             df_refund_display.columns = ['DateTime', 'Refund Amount (GGUSD)', 'To Address', 'TxHash']
         
