@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  gmt-dashboard:
+    build: .
+    container_name: gmt-pay-dashboard
+    restart: always
+    ports:
+      - "8501:8501"
+    environment:
+      - ETHERSCAN_API_KEY=${ETHERSCAN_API_KEY}
+      - HELIUS_API_KEY=${HELIUS_API_KEY}
+    volumes:
+      # 挂载数据文件，持久化缓存
+      - ./chain_data_cache.csv:/app/chain_data_cache.csv
+      - ./vip_users_purchases.csv:/app/vip_users_purchases.csv
+      - ./.env:/app/.env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+

@@ -1,0 +1,81 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Environment variables
+.env
+
+# Data files (运行时生成的缓存数据，不需要上传)
+chain_data_cache.csv
+vip_users_purchases.csv
+vip_missing_discount_after_activity.csv
+
+# TSV files (NFT holder快照数据，敏感信息不上传到公开仓库)
+*.tsv
+nft-owners-*.tsv
+
+# Excel files (旧的静态数据文件，已废弃)
+*.xlsx
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Debug/Test scripts (含硬编码API Keys，不上传)
+analyze_helius_issue.py
+check_token_accounts.py
+fetch_all_solana_history.py
+debug_solana_data.py
+full_solana_test.py
+
+# 废弃的旧版本文件
+dashboard.py
+dashboard_v2.py
+dashboard_v3_backup.py
+analyze_nft_holders.py
+analyze_nft_holders_v2.py
+read_excel_files.py
+requirements_dynamic.txt
+run_dashboard.bat
+run_dynamic_dashboard.bat
+
+# 分析结果CSV（运行时生成）
+diamond_hands_12weeks.csv
+loyal_holders_6weeks_plus.csv
+
+# 图片文件（运行时生成）
+*.png
