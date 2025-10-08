@@ -83,10 +83,10 @@ class EtherscanFetcher(ChainDataFetcher):
         if not self.config:
             raise ValueError(f"不支持的链: {chain}")
         
-        # 获取 API Key
-        self.api_key = os.getenv(self.config['env_key'], '')
+        # 获取 API Key（优先从Streamlit Secrets读取）
+        self.api_key = get_api_key(self.config['env_key'])
         if not self.api_key:
-            safe_log_message(f"警告: 未设置 {self.config['env_key']}, 将使用免费API限制")
+            log_message(f"警告: 未设置 {self.config['env_key']}, 将使用免费API限制")
     
     def fetch_token_transfers(self, address: str, start_timestamp: int = None, 
                              end_timestamp: int = None, page: int = 1, 
@@ -155,10 +155,10 @@ class EtherscanFetcher(ChainDataFetcher):
                 return []
         
         except requests.exceptions.RequestException as e:
-            safe_log_message(f"  {self.config['chain_name']} 请求失败: {e}")
+            log_message(f"  {self.config['chain_name']} 请求失败: {e}")
             return []
         except Exception as e:
-            safe_log_message(f"  {self.config['chain_name']} 处理数据时出错: {e}")
+            log_message(f"  {self.config['chain_name']} 处理数据时出错: {e}")
             return []
     
     def fetch_transactions(self, address: str, days: int = 100, direction: str = 'inflow') -> pd.DataFrame:
