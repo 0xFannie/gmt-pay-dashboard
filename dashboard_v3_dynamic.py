@@ -1500,6 +1500,38 @@ st.markdown("---")
 st.markdown('<div id="5"></div>', unsafe_allow_html=True)
 st.header(get_text('vip_analysis', lang))
 
+# VIP名单来源说明
+if lang == 'zh':
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(109, 40, 217, 0.05) 100%);
+                border: 1px solid rgba(139, 92, 246, 0.3); 
+                border-radius: 16px; 
+                padding: 20px 24px; 
+                margin-bottom: 24px;
+                box-shadow: 0 4px 20px rgba(139, 92, 246, 0.1);">
+    <p style="color: #1a1a1a; margin: 0; line-height: 1.8; font-size: 0.95rem;">
+    <strong style="color: #7c3aed;">🎖️ VIP用户名单来源</strong><br>
+    Genesis Holder + Morchi Achievement Legendary Holder 的每周钱包地址快照由 Cora 提供。<br>
+    📊 <strong>截止今天的每周名单：</strong> <a href="https://www.notion.so/fsl-web3/Gensisi-Holder-Morchi-achievenment-legendary-holder-wallet-list-from-Cora-28595c775fea800fbbbedd6fda534108" target="_blank" style="color: #7c3aed; text-decoration: none; font-weight: 600;">查看 Notion 文档 →</a>
+    </p>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(109, 40, 217, 0.05) 100%);
+                border: 1px solid rgba(139, 92, 246, 0.3); 
+                border-radius: 16px; 
+                padding: 20px 24px; 
+                margin-bottom: 24px;
+                box-shadow: 0 4px 20px rgba(139, 92, 246, 0.1);">
+    <p style="color: #1a1a1a; margin: 0; line-height: 1.8; font-size: 0.95rem;">
+    <strong style="color: #7c3aed;">🎖️ VIP User List Source</strong><br>
+    Weekly wallet snapshots of Genesis Holder + Morchi Achievement Legendary Holder are provided by Cora.<br>
+    📊 <strong>Weekly lists up to today:</strong> <a href="https://www.notion.so/fsl-web3/Gensisi-Holder-Morchi-achievenment-legendary-holder-wallet-list-from-Cora-28595c775fea800fbbbedd6fda534108" target="_blank" style="color: #7c3aed; text-decoration: none; font-weight: 600;">View Notion Doc →</a>
+    </p>
+    </div>
+    """, unsafe_allow_html=True)
+
 # 加载VIP分析数据
 df_vip = load_vip_analysis()
 
