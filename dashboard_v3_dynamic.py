@@ -792,7 +792,7 @@ cache_file = 'chain_data_cache.csv'
 if os.path.exists(cache_file):
     cache_age = (datetime.now().timestamp() - os.path.getmtime(cache_file)) / 60
     if lang == 'zh':
-    st.sidebar.info(f"📊 数据状态\n\n缓存时间: {cache_age:.1f} 分钟前\n\n总记录: {len(df)} 条")
+        st.sidebar.info(f"📊 数据状态\n\n缓存时间: {cache_age:.1f} 分钟前\n\n总记录: {len(df)} 条")
     else:
         st.sidebar.info(f"📊 Data Status\n\nCached: {cache_age:.1f} min ago\n\nTotal records: {len(df)}")
 
