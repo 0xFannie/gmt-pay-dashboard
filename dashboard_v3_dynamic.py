@@ -834,7 +834,7 @@ cache_file = 'chain_data_cache.csv'
 if os.path.exists(cache_file):
     cache_age = (datetime.now().timestamp() - os.path.getmtime(cache_file)) / 60
     if lang == 'zh':
-        st.sidebar.info(f"📊 数据状态\n\n缓存时间: {cache_age:.1f} 分钟前\n\n总记录: {len(df)} 条")
+    st.sidebar.info(f"📊 数据状态\n\n缓存时间: {cache_age:.1f} 分钟前\n\n总记录: {len(df)} 条")
     else:
         st.sidebar.info(f"📊 Data Status\n\nCached: {cache_age:.1f} min ago\n\nTotal records: {len(df)}")
 
@@ -929,7 +929,7 @@ st.header(get_text('core_metrics', lang))
 col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
-    total_cards = len(df_filtered)
+    total_cards = len(df_valid)  # 使用df_valid而不是df_filtered，显示所有有效卡片
     st.metric(get_text('total_cards', lang), f"{total_cards:,} {get_text('cards', lang)}")
 
 with col2:
@@ -982,9 +982,9 @@ else:
 
 st.markdown("---")
 
-# 📑 目录导航
+# 📑 目录导航 - 使用Streamlit原生组件
 if lang == 'zh':
-    toc_title = "📑 分析模块导航"
+    st.markdown("### 📑 分析模块导航")
     toc_items = [
         ("🌐 各链销售概览", "#1"),
         ("💳 卡面值分析", "#2"),
@@ -995,7 +995,7 @@ if lang == 'zh':
         ("📋 原始交易数据", "#6")
     ]
 else:
-    toc_title = "📑 Analysis Modules"
+    st.markdown("### 📑 Analysis Modules")
     toc_items = [
         ("🌐 Chain Sales Overview", "#1"),
         ("💳 Card Value Analysis", "#2"),
@@ -1006,35 +1006,27 @@ else:
         ("📋 Raw Transaction Data", "#6")
     ]
 
-toc_html = f"""
-<div style="background: white; 
-            border: 2px solid #e2e8f0; 
-            border-radius: 16px; 
-            padding: 24px 32px; 
-            margin-bottom: 32px;
-            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
-    <h3 style="color: #0f172a; font-size: 1.25rem; font-weight: 700; margin: 0 0 20px 0; 
-               display: flex; align-items: center;">
-        {toc_title}
-    </h3>
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;">
-"""
-
-for item_text, item_id in toc_items:
-    toc_html += f"""
-        <a href="{item_id}" class="toc-nav-link">
-            <div class="toc-nav-item">
+# 使用columns创建网格布局
+cols = st.columns(3)
+for idx, (item_text, item_id) in enumerate(toc_items):
+    col_idx = idx % 3
+    with cols[col_idx]:
+        st.markdown(f"""
+        <a href="{item_id}" style="text-decoration: none;">
+            <div style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+                        border: 1px solid #e2e8f0;
+                        border-radius: 10px;
+                        padding: 14px 18px;
+                        text-align: center;
+                        color: #334155;
+                        font-weight: 500;
+                        font-size: 0.95rem;
+                        margin-bottom: 12px;
+                        transition: all 0.2s ease;">
                 {item_text}
             </div>
         </a>
-    """
-
-toc_html += """
-    </div>
-</div>
-"""
-
-st.markdown(toc_html, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -1127,7 +1119,7 @@ chain_stats = df_filtered.groupby('Chain').agg({
 }).round(2)
 
 if lang == 'zh':
-    chain_stats.columns = ['卡片数量', '卡片总面值', '实际收入', '手续费收入', '平均手续费率(%)']
+chain_stats.columns = ['卡片数量', '卡片总面值', '实际收入', '手续费收入', '平均手续费率(%)']
 else:
     chain_stats.columns = ['Card Count', 'Card Value Sum', 'Actual Revenue', 'Fee Income', 'Avg Fee Rate(%)']
 chain_stats = chain_stats.sort_values(chain_stats.columns[0], ascending=False)
@@ -1621,7 +1613,7 @@ if df_vip is not None and len(df_vip) > 0:
     
     # 快照匹配情况（活动后）
     if len(df_vip_after) > 0:
-        st.subheader(get_text('vip_snapshot_match', lang))
+        st.subheader(get_text('vip_snapshot_match', lang) if lang == 'zh' else '📸 Snapshot Matching & Discount Status')
         
         in_snapshot = len(df_vip_after[df_vip_after['In_Snapshot'] == True])
         not_in_snapshot = len(df_vip_after[df_vip_after['In_Snapshot'] == False])
@@ -1630,6 +1622,7 @@ if df_vip is not None and len(df_vip) > 0:
         
         with col1:
             # 快照匹配饼图
+            st.markdown(f"**{'快照匹配状态' if lang == 'zh' else 'Snapshot Match Status'}**")
             snapshot_data = pd.DataFrame({
                 'Status': [get_text('vip_in_snapshot', lang), get_text('vip_not_in_snapshot', lang)],
                 'Count': [in_snapshot, not_in_snapshot]
@@ -1639,20 +1632,19 @@ if df_vip is not None and len(df_vip) > 0:
                 snapshot_data,
                 values='Count',
                 names='Status',
-                title=get_text('vip_snapshot_match', lang) if lang == 'zh' else 'Snapshot Match Status',
                 color_discrete_sequence=['#10b981', '#94a3b8']
             )
             fig_snapshot.update_traces(textposition='inside', textinfo='percent+label')
             fig_snapshot.update_layout(
-                margin=dict(l=20, r=20, t=50, b=20),
+                margin=dict(l=20, r=20, t=20, b=20),
                 showlegend=True,
-                legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.05)
+                legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5)
             )
             st.plotly_chart(fig_snapshot, use_container_width=True)
         
         with col2:
             # 折扣享受情况
-            st.subheader(get_text('vip_discount_status', lang))
+            st.markdown(f"**{get_text('vip_discount_status', lang)}**")
             
             enjoyed = len(df_vip_after[df_vip_after['Status'] == '✅已享受'])
             not_enjoyed = len(df_vip_after[df_vip_after['Status'] == '❌未享受'])
@@ -1667,7 +1659,6 @@ if df_vip is not None and len(df_vip) > 0:
                 discount_data,
                 x='Status',
                 y='Count',
-                title=get_text('vip_discount_status', lang) if lang == 'zh' else 'Discount Status',
                 color='Status',
                 color_discrete_map={
                     get_text('vip_enjoyed', lang): '#10b981',
@@ -1676,7 +1667,7 @@ if df_vip is not None and len(df_vip) > 0:
                 }
             )
             fig_discount.update_layout(
-                margin=dict(l=20, r=20, t=50, b=40),
+                margin=dict(l=20, r=20, t=20, b=40),
                 showlegend=False,
                 xaxis_title='',
                 yaxis_title=get_text('count', lang) if lang == 'zh' else 'Count'
@@ -1817,7 +1808,7 @@ st.markdown("")
 # 格式化显示
 df_display = df_filtered[['DateTime', 'Chain', 'Card_Value', 'Amount', 'Fee', 'Fee_Percentage', 'Asset', 'TxHash']].copy()
 if lang == 'zh':
-    df_display.columns = ['时间', '链', '卡片面值(USD)', '实付金额(USD)', '手续费(USD)', '手续费率(%)', '支付代币', '交易哈希']
+df_display.columns = ['时间', '链', '卡片面值(USD)', '实付金额(USD)', '手续费(USD)', '手续费率(%)', '支付代币', '交易哈希']
 else:
     df_display.columns = ['DateTime', 'Chain', 'Card Value(USD)', 'Amount(USD)', 'Fee(USD)', 'Fee Rate(%)', 'Asset', 'TxHash']
 df_display = df_display.sort_values(df_display.columns[0], ascending=False)
@@ -2011,7 +2002,7 @@ if not df_refund.empty:
         df_refund_display['DateTime'] = df_refund_display['DateTime'].dt.strftime('%Y-%m-%d %H:%M:%S')
         df_refund_display['Amount'] = df_refund_display['Amount'].apply(lambda x: f"${x:.2f}")
         if lang == 'zh':
-            df_refund_display.columns = ['时间', '返还金额 (GGUSD)', '接收地址', '交易哈希']
+        df_refund_display.columns = ['时间', '返还金额 (GGUSD)', '接收地址', '交易哈希']
         else:
             df_refund_display.columns = ['DateTime', 'Refund Amount (GGUSD)', 'To Address', 'TxHash']
         
