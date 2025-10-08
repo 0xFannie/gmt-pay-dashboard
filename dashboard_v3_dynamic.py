@@ -543,6 +543,32 @@ st.markdown("""
         background: #f8fafc !important;
     }
     
+    /* === TOC Navigation Links === */
+    .toc-nav-link {
+        text-decoration: none;
+        display: block;
+    }
+    
+    .toc-nav-item {
+        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 14px 18px;
+        cursor: pointer;
+        color: #334155;
+        font-weight: 500;
+        font-size: 0.95rem;
+        transition: all 0.2s ease;
+    }
+    
+    .toc-nav-item:hover {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        color: white;
+        border-color: #3b82f6;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+    
     /* === Form Inputs (tw: rounded-md, border-gray-300, focus:ring-blue-500) === */
     .stSelectbox label,
     .stMultiSelect label,
@@ -709,18 +735,34 @@ def determine_card_value(amount):
 @st.cache_data(ttl=1800)  # 缓存30分钟
 def load_vip_analysis():
     """加载VIP用户购卡分析数据"""
-    vip_file = 'vip_users_purchases.csv'
-    if not os.path.exists(vip_file):
-        return None
+    import base64
+    from io import StringIO
     
+    # 方案1: 尝试从Streamlit Secrets读取Base64编码的数据
     try:
-        df = pd.read_csv(vip_file)
-        df['DateTime'] = pd.to_datetime(df['DateTime'])
-        df['Date'] = pd.to_datetime(df['Date'])
-        return df
+        if hasattr(st, 'secrets') and 'VIP_DATA_BASE64' in st.secrets:
+            encoded_data = st.secrets['VIP_DATA_BASE64']
+            decoded_data = base64.b64decode(encoded_data).decode('utf-8')
+            df = pd.read_csv(StringIO(decoded_data))
+            df['DateTime'] = pd.to_datetime(df['DateTime'])
+            df['Date'] = pd.to_datetime(df['Date'])
+            return df
     except Exception as e:
-        st.error(f"加载VIP数据失败: {e}")
-        return None
+        pass  # 如果Secrets中没有，继续尝试本地文件
+    
+    # 方案2: 尝试从本地文件读取（本地开发环境）
+    vip_file = 'vip_users_purchases.csv'
+    if os.path.exists(vip_file):
+        try:
+            df = pd.read_csv(vip_file)
+            df['DateTime'] = pd.to_datetime(df['DateTime'])
+            df['Date'] = pd.to_datetime(df['Date'])
+            return df
+        except Exception as e:
+            st.error(f"加载VIP数据失败: {e}")
+            return None
+    
+    return None
 
 def process_data(df):
     """处理数据，添加业务字段"""
@@ -980,26 +1022,8 @@ toc_html = f"""
 
 for item_text, item_id in toc_items:
     toc_html += f"""
-        <a href="{item_id}" style="text-decoration: none;">
-            <div style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-                        border: 1px solid #e2e8f0;
-                        border-radius: 10px;
-                        padding: 14px 18px;
-                        transition: all 0.2s ease;
-                        cursor: pointer;
-                        color: #334155;
-                        font-weight: 500;
-                        font-size: 0.95rem;"
-                 onmouseover="this.style.background='linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)'; 
-                             this.style.color='white'; 
-                             this.style.borderColor='#3b82f6'; 
-                             this.style.transform='translateY(-2px)';
-                             this.style.boxShadow='0 4px 12px rgba(59, 130, 246, 0.3)';"
-                 onmouseout="this.style.background='linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)'; 
-                            this.style.color='#334155'; 
-                            this.style.borderColor='#e2e8f0';
-                            this.style.transform='translateY(0)';
-                            this.style.boxShadow='none';">
+        <a href="{item_id}" class="toc-nav-link">
+            <div class="toc-nav-item">
                 {item_text}
             </div>
         </a>
@@ -1764,9 +1788,9 @@ if df_vip is not None and len(df_vip) > 0:
         st.markdown(insights_md)
 else:
     if lang == 'zh':
-        st.info("💡 VIP用户分析数据尚未生成。请先运行 `python analyze_vip_users.py` 生成分析数据。")
+        st.warning("🔒 **VIP用户分析数据不可用**\n\nVIP持有者数据为敏感信息，仅在本地环境可用。云端部署版本不包含此数据。")
     else:
-        st.info("💡 VIP user analysis data not yet generated. Please run `python analyze_vip_users.py` first.")
+        st.warning("🔒 **VIP User Analysis Data Unavailable**\n\nVIP holder data is sensitive and only available in local environment. Cloud deployment does not include this data.")
 
 st.markdown("---")
 
