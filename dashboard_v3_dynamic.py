@@ -1247,6 +1247,36 @@ with col1:
     st.metric(get_text('min_fee_rate', lang), f"{df_filtered['Fee_Percentage'].min():.2f}%")
     st.metric(get_text('max_fee_rate', lang), f"{df_filtered['Fee_Percentage'].max():.2f}%")
     st.metric(get_text('median_fee_rate', lang), f"{df_filtered['Fee_Percentage'].median():.2f}%")
+    
+    # 添加手续费率说明
+    if lang == 'zh':
+        st.info("""
+        **💡 手续费率说明**
+        
+        手续费率 = 实际手续费 / 卡片面值 × 100%
+        
+        **示例：**
+        - $25卡：$0.75手续费 = 3.00% 费率
+        - $50卡：$2.50手续费 = 5.00% 费率
+        - $100卡：$3.00手续费 = 3.00% 费率
+        - $200卡：$6.00手续费 = 3.00% 费率
+        
+        ⚠️ 基础费率为卡面值的3%，较小面值卡片的费率相对较高。
+        """)
+    else:
+        st.info("""
+        **💡 Fee Rate Explanation**
+        
+        Fee Rate = Actual Fee / Card Face Value × 100%
+        
+        **Examples:**
+        - $25 card: $0.75 fee = 3.00% rate
+        - $50 card: $2.50 fee = 5.00% rate
+        - $100 card: $3.00 fee = 3.00% rate
+        - $200 card: $6.00 fee = 3.00% rate
+        
+        ⚠️ Base rate is 3% of card value. Smaller denominations have relatively higher rates.
+        """)
 
 with col2:
     st.subheader(get_text('chain_avg_fee_rate', lang))
