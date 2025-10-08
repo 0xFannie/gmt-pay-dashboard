@@ -1103,7 +1103,7 @@ chain_stats = df_filtered.groupby('Chain').agg({
 }).round(2)
 
 if lang == 'zh':
-chain_stats.columns = ['卡片数量', '卡片总面值', '实际收入', '手续费收入', '平均手续费率(%)']
+    chain_stats.columns = ['卡片数量', '卡片总面值', '实际收入', '手续费收入', '平均手续费率(%)']
 else:
     chain_stats.columns = ['Card Count', 'Card Value Sum', 'Actual Revenue', 'Fee Income', 'Avg Fee Rate(%)']
 chain_stats = chain_stats.sort_values(chain_stats.columns[0], ascending=False)
@@ -1793,7 +1793,7 @@ st.markdown("")
 # 格式化显示
 df_display = df_filtered[['DateTime', 'Chain', 'Card_Value', 'Amount', 'Fee', 'Fee_Percentage', 'Asset', 'TxHash']].copy()
 if lang == 'zh':
-df_display.columns = ['时间', '链', '卡片面值(USD)', '实付金额(USD)', '手续费(USD)', '手续费率(%)', '支付代币', '交易哈希']
+    df_display.columns = ['时间', '链', '卡片面值(USD)', '实付金额(USD)', '手续费(USD)', '手续费率(%)', '支付代币', '交易哈希']
 else:
     df_display.columns = ['DateTime', 'Chain', 'Card Value(USD)', 'Amount(USD)', 'Fee(USD)', 'Fee Rate(%)', 'Asset', 'TxHash']
 df_display = df_display.sort_values(df_display.columns[0], ascending=False)
@@ -1987,7 +1987,7 @@ if not df_refund.empty:
         df_refund_display['DateTime'] = df_refund_display['DateTime'].dt.strftime('%Y-%m-%d %H:%M:%S')
         df_refund_display['Amount'] = df_refund_display['Amount'].apply(lambda x: f"${x:.2f}")
         if lang == 'zh':
-        df_refund_display.columns = ['时间', '返还金额 (GGUSD)', '接收地址', '交易哈希']
+            df_refund_display.columns = ['时间', '返还金额 (GGUSD)', '接收地址', '交易哈希']
         else:
             df_refund_display.columns = ['DateTime', 'Refund Amount (GGUSD)', 'To Address', 'TxHash']
         
