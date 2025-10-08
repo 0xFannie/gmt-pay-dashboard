@@ -87,7 +87,7 @@ All data is fetched from the following public on-chain wallet addresses:
 
 **EVM Chains** (Ethereum/BNB/Polygon):
 ```
-0x7a75eca169f67fcd4fe58b53a0b26e1ee774ca77
+0x523ffc4d9782dc8af35664625fbb3e1d8e8ec6cb
 ```
 
 **Solana Chain**:
@@ -239,7 +239,7 @@ gmt-pay-dashboard/
 
 **EVM链** (Ethereum/BNB/Polygon):
 ```
-0x7a75eca169f67fcd4fe58b53a0b26e1ee774ca77
+0x523ffc4d9782dc8af35664625fbb3e1d8e8ec6cb
 ```
 
 **Solana链**:
