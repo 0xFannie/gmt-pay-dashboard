@@ -862,15 +862,26 @@ st.sidebar.header(get_text('sidebar_title', lang))
 if st.sidebar.button(get_text('refresh_data', lang), use_container_width=True):
     st.cache_data.clear()
     st.success("数据已刷新!")
-# 直接加载缓存数据，避免API调用
+
+# 尝试加载缓存数据，如果不存在则自动抓取
 try:
     df_raw = pd.read_csv('chain_data_cache.csv')
     df_raw['DateTime'] = pd.to_datetime(df_raw['DateTime'])
     df_raw['Date'] = df_raw['DateTime'].dt.date
     st.success(f"✅ 已加载缓存数据: {len(df_raw):,} 条交易记录")
 except FileNotFoundError:
-    st.error("❌ 未找到缓存数据文件 chain_data_cache.csv，请先运行数据抓取")
-    st.stop()
+    st.info("📡 未找到缓存数据，正在自动抓取链上数据...")
+    try:
+        # 自动抓取数据
+        df_raw = load_chain_data(force_refresh=True)
+        if not df_raw.empty:
+            st.success(f"✅ 数据抓取成功: {len(df_raw):,} 条交易记录")
+        else:
+            st.error("❌ 数据抓取失败，未获取到任何数据")
+            st.stop()
+    except Exception as e:
+        st.error(f"❌ 数据抓取失败: {e}")
+        st.stop()
 except Exception as e:
     st.error(f"❌ 加载缓存数据失败: {e}")
     st.stop()
