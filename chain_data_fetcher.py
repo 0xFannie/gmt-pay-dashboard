@@ -19,6 +19,7 @@ from typing import List, Dict, Optional
 import os
 from dotenv import load_dotenv
 import streamlit as st
+from moralis import evm_api
 
 # 加载环境变量（优先使用Streamlit Secrets，其次是.env文件）
 load_dotenv()
@@ -71,7 +72,7 @@ class EtherscanFetcher(ChainDataFetcher):
         'polygon': {
             'url': 'https://api.etherscan.io/v2/api',
             'chainid': 137,  # Polygon Mainnet
-            'env_key': 'ETHERSCAN_API_KEY',  # V2 API使用统一Key
+            'env_key': 'ETHERSCAN_API_KEY',  # 使用Etherscan API Key（V2 API支持多链）
             'chain_name': 'Polygon'
         }
     }
@@ -104,14 +105,8 @@ class EtherscanFetcher(ChainDataFetcher):
         Returns:
             交易列表
         """
-        # 使用 V2 API 端点
-        # 例如: https://api.etherscan.io/api -> https://api.etherscan.io/v2/api
-        base_url = self.config['url']
-        if base_url.endswith('/api'):
-            v2_url = base_url[:-4] + '/v2/api'
-        else:
-            v2_url = base_url + '/v2'
-        
+        # 使用V2 API格式（所有链都支持）
+        api_url = self.config['url']
         params = {
             'chainid': self.config['chainid'],
             'module': 'account',
@@ -129,10 +124,13 @@ class EtherscanFetcher(ChainDataFetcher):
             params['endblock'] = 99999999
         
         try:
-            # 使用 Etherscan V2 API (支持统一chainid参数)
-            response = requests.get(self.config['url'], params=params, timeout=30)
+            # 根据链类型使用相应的API端点
+            response = requests.get(api_url, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
+            
+            # Etherscan免费版rate limit: 5次/秒
+            time.sleep(0.25)
             
             # 确保data是字典类型
             if not isinstance(data, dict):
@@ -161,49 +159,44 @@ class EtherscanFetcher(ChainDataFetcher):
             log_message(f"  {self.config['chain_name']} 处理数据时出错: {e}")
             return []
     
-    def fetch_transactions(self, address: str, days: int = 100, direction: str = 'inflow') -> pd.DataFrame:
+    def fetch_transactions(self, address: str, days: int = None, direction: str = 'inflow') -> pd.DataFrame:
         """
-        抓取最近 N 天的交易数据
+        抓取所有历史交易数据（不限制时间范围）
         
         Args:
             address: 钱包地址
-            days: 天数
+            days: 已弃用，保留兼容性
             direction: 'inflow' (转入) 或 'outflow' (转出)
         
         Returns:
             DataFrame 格式的交易数据
         """
-        log_message(f"正在抓取 {self.config['chain_name']} 链的数据 ({'转出' if direction == 'outflow' else '转入'})...")
+        log_message(f"正在抓取 {self.config['chain_name']} 链的所有历史数据 ({'转出' if direction == 'outflow' else '转入'})...")
         
         all_transactions = []
         page = 1
-        max_pages = 100  # 增加最大页数以获取更多历史数据
-        cutoff_timestamp = int((datetime.now() - timedelta(days=days)).timestamp())
+        max_pages = 1000  # 最大页数限制
         
         while page <= max_pages:
-            transactions = self.fetch_token_transfers(address, page=page, offset=100)
+            transactions = self.fetch_token_transfers(address, page=page, offset=40)
             
             if not transactions:
+                log_message(f"  第{page}页无数据，停止抓取")
                 break
             
-            # 检查是否已经超出时间范围
-            oldest_tx_time = min(int(tx.get('timeStamp', 0)) for tx in transactions)
-            if oldest_tx_time < cutoff_timestamp:
-                # 只添加在时间范围内的交易
-                transactions = [tx for tx in transactions if int(tx.get('timeStamp', 0)) >= cutoff_timestamp]
-                all_transactions.extend(transactions)
-                log_message(f"  已获取 {len(all_transactions)} 条交易记录（已到达目标时间）")
-                break
-            
+            # 添加所有交易，不进行时间过滤
             all_transactions.extend(transactions)
-            log_message(f"  已获取 {len(all_transactions)} 条交易记录...")
+            log_message(f"  第{page}页: {len(transactions)} 条交易")
             
-            # 如果获取的交易少于100条，说明已经是最后一页
-            if len(transactions) < 100:
+            # 如果返回的交易数少于40条，说明已经到最后一页
+            if len(transactions) < 40:
+                log_message(f"  已到达最后一页")
                 break
             
             page += 1
-            time.sleep(0.2)  # 避免API限流
+            time.sleep(0.25)  # Etherscan免费版rate limit: 5次/秒，需要至少0.2秒间隔
+        
+        log_message(f"  {self.config['chain_name']} 总计获取 {len(all_transactions)} 条交易")
         
         if not all_transactions:
             log_message(f"  {self.config['chain_name']}: 未找到交易记录")
@@ -216,11 +209,6 @@ class EtherscanFetcher(ChainDataFetcher):
             log_message(f"  {self.config['chain_name']}: 未找到交易记录")
             return pd.DataFrame()
         
-        # 过滤最近 N 天的数据
-        cutoff_timestamp = int((datetime.now() - timedelta(days=days)).timestamp())
-        df['timeStamp'] = df['timeStamp'].astype(int)
-        df = df[df['timeStamp'] >= cutoff_timestamp]
-        
         # 根据方向过滤
         if direction == 'inflow':
             # 只保留转入交易（to = address）
@@ -230,7 +218,7 @@ class EtherscanFetcher(ChainDataFetcher):
             df = df[df['from'].str.lower() == address.lower()]
         
         if df.empty:
-            log_message(f"  {self.config['chain_name']}: 最近{days}天无交易记录")
+            log_message(f"  {self.config['chain_name']}: 无{direction}交易记录")
             return pd.DataFrame()
         
         # 标准化数据格式
@@ -279,20 +267,261 @@ class EtherscanFetcher(ChainDataFetcher):
         symbol_upper = symbol.upper()
         contract_lower = contract_address.lower()
         
-        # 代币合约地址 (统一小写)
-        GGUSD_CONTRACT = '0xffffff9936bd58a008855b0812b44d2c8dffe2aa'
-        BUSD_CONTRACT = '0x55d398326f99059ff775485246999027b3197955'  # BSC-USD (BUSD)
+        # 根据链类型使用不同的合约地址
+        if self.chain == 'polygon':
+            # Polygon链上的合约地址
+            GGUSD_CONTRACT = '0xffffff9936bd58a008855b0812b44d2c8dffe2aa'
+            USDT_CONTRACT = '0xc2132d05d31c914a87c6611c10748aeb04b58e8f'  # USDT on Polygon
+            USDC_CONTRACT = '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359'  # USDC on Polygon
+        elif self.chain == 'ethereum':
+            # Ethereum链上的合约地址
+            USDT_CONTRACT = '0xdac17f958d2ee523a2206206994597c13d831ec7'  # USDT on Ethereum
+            USDC_CONTRACT = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'  # USDC on Ethereum
+            GGUSD_CONTRACT = None  # Ethereum链不支持GGUSD
+        elif self.chain == 'solana':
+            # Solana链上的合约地址
+            USDT_CONTRACT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'  # USDT on Solana
+            USDC_CONTRACT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'  # USDC on Solana
+            GGUSD_CONTRACT = 'GGUSDyBUPFg5RrgWwqEqhXoha85iYGs6cL57SyK4G2Y7'  # GGUSD on Solana
+        else:
+            # BNB Chain上的合约地址
+            GGUSD_CONTRACT = '0xffffff9936bd58a008855b0812b44d2c8dffe2aa'
+            USDT_CONTRACT = '0x55d398326f99059ff775485246999027b3197955'  # USDT on BNB Chain
+            USDC_CONTRACT = '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'  # USDC on BNB Chain
         
         # 优先使用合约地址识别
-        if contract_lower == GGUSD_CONTRACT:
+        if GGUSD_CONTRACT and contract_lower == GGUSD_CONTRACT.lower():
             return 'GGUSD'
-        elif contract_lower == BUSD_CONTRACT:
-            return 'BUSD'
+        elif contract_lower == USDT_CONTRACT.lower():
+            return 'USDT'
+        elif contract_lower == USDC_CONTRACT.lower():
+            return 'USDC'
         # 然后使用symbol识别
         elif 'GGUSD' in symbol_upper:
             return 'GGUSD'
-        elif 'BUSD' in symbol_upper or 'BSC-USD' in symbol_upper:
-            return 'BUSD'
+        elif 'USDT' in symbol_upper:
+            return 'USDT'
+        elif 'USDC' in symbol_upper:
+            return 'USDC'
+        else:
+            return 'Other'
+
+
+class MoralisFetcher(ChainDataFetcher):
+    """
+    Moralis API 数据抓取器
+    支持 Ethereum, BSC, Polygon 等 EVM 链
+    使用 Moralis Web3 Data API
+    """
+    
+    # Moralis 支持的链配置
+    CHAIN_CONFIGS = {
+        'ethereum': {
+            'chain': 'eth',
+            'chain_name': 'Ethereum',
+            'env_key': 'MORALIS_API_KEY'
+        },
+        'bsc': {
+            'chain': 'bsc',
+            'chain_name': 'BNB Chain',
+            'env_key': 'MORALIS_API_KEY'
+        },
+        'polygon': {
+            'chain': 'polygon',
+            'chain_name': 'Polygon',
+            'env_key': 'MORALIS_API_KEY'
+        }
+    }
+    
+    def __init__(self, chain: str = 'polygon'):
+        super().__init__()
+        self.chain = chain
+        self.config = self.CHAIN_CONFIGS.get(chain)
+        if not self.config:
+            raise ValueError(f"不支持的链: {chain}")
+        
+        # 获取 Moralis API Key
+        self.api_key = get_api_key(self.config['env_key'])
+        if not self.api_key:
+            raise ValueError(f"未设置 {self.config['env_key']}, 请设置 Moralis API Key")
+        
+        # 设置 Moralis API Key
+        evm_api.api_key = self.api_key
+    
+    def fetch_token_transfers(self, address: str, cursor: str = None, limit: int = 100) -> Dict:
+        """
+        使用 Moralis API 抓取代币转账记录
+        
+        Args:
+            address: 钱包地址
+            cursor: 分页游标
+            limit: 每页数量 (最大100)
+        
+        Returns:
+            包含交易数据和分页信息的字典
+        """
+        try:
+            params = {
+                "address": address,
+                "chain": self.config['chain'],
+                "limit": limit
+            }
+            
+            if cursor:
+                params["cursor"] = cursor
+            
+            # 使用 Moralis API 获取 ERC-20 代币转账
+            result = evm_api.token.get_wallet_token_transfers(self.api_key, params)
+            
+            # Moralis API 有 rate limit，添加延迟
+            time.sleep(0.1)
+            
+            return result
+            
+        except Exception as e:
+            log_message(f"  {self.config['chain_name']} Moralis API 错误: {e}")
+            return {"result": [], "cursor": None}
+    
+    def fetch_transactions(self, address: str, days: int = None, direction: str = 'inflow') -> pd.DataFrame:
+        """
+        抓取所有历史交易数据（不限制时间范围）
+        
+        Args:
+            address: 钱包地址
+            days: 已弃用，保留兼容性
+            direction: 'inflow' (转入) 或 'outflow' (转出)
+        
+        Returns:
+            DataFrame 格式的交易数据
+        """
+        log_message(f"正在使用 Moralis API 抓取 {self.config['chain_name']} 链的所有历史数据 ({'转出' if direction == 'outflow' else '转入'})...")
+        
+        all_transactions = []
+        cursor = None
+        page_count = 0
+        max_pages = 1000  # 最大页数限制
+        
+        while page_count < max_pages:
+            page_count += 1
+            
+            # 获取一页数据
+            result = self.fetch_token_transfers(address, cursor=cursor, limit=100)
+            
+            transactions = result.get("result", [])
+            if not transactions:
+                log_message(f"  第{page_count}页无数据，停止抓取")
+                break
+            
+            # 添加所有交易，不进行时间过滤
+            all_transactions.extend(transactions)
+            log_message(f"  第{page_count}页: {len(transactions)} 条交易")
+            
+            # 获取下一页游标
+            cursor = result.get("cursor")
+            if not cursor:
+                log_message(f"  已到达最后一页")
+                break
+            
+            # 如果返回的交易数少于限制，说明已经到最后一页
+            if len(transactions) < 100:
+                log_message(f"  已到达最后一页")
+                break
+        
+        log_message(f"  {self.config['chain_name']} 总计获取 {len(all_transactions)} 条交易")
+        
+        if not all_transactions:
+            log_message(f"  {self.config['chain_name']}: 未找到交易记录")
+            return pd.DataFrame()
+        
+        # 转换为 DataFrame
+        df = pd.DataFrame(all_transactions)
+        
+        if df.empty:
+            log_message(f"  {self.config['chain_name']}: 未找到交易记录")
+            return pd.DataFrame()
+        
+        # 根据方向过滤
+        if direction == 'inflow':
+            # 只保留转入交易（to_address = address）
+            df = df[df['to_address'].str.lower() == address.lower()]
+        else:  # outflow
+            # 只保留转出交易（from_address = address）
+            df = df[df['from_address'].str.lower() == address.lower()]
+        
+        if df.empty:
+            log_message(f"  {self.config['chain_name']}: 无{direction}交易记录")
+            return pd.DataFrame()
+        
+        # 标准化数据格式
+        df_processed = self._process_data(df, direction)
+        
+        log_message(f"  {self.config['chain_name']}: 成功获取 {len(df_processed)} 条有效交易")
+        return df_processed
+    
+    def _process_data(self, df: pd.DataFrame, direction: str = 'inflow') -> pd.DataFrame:
+        """处理和标准化 Moralis API 数据"""
+        result = pd.DataFrame()
+        
+        # 时间转换 (Moralis 使用 ISO 格式，移除时区信息以保持一致性)
+        result['DateTime'] = pd.to_datetime(df['block_timestamp']).dt.tz_localize(None)
+        
+        # 金额转换 (使用 value_decimal 字段，Moralis 已经处理了精度)
+        result['Amount'] = df['value_decimal'].astype(float)
+        
+        # 代币识别
+        result['Asset'] = df.apply(lambda row: self._identify_token(
+            row.get('token_symbol', ''),
+            row.get('address', '')  # Moralis 使用 'address' 而不是 'token_address'
+        ), axis=1)
+        
+        # 链信息
+        result['Chain'] = self.config['chain_name']
+        
+        # 交易哈希和地址
+        result['TxHash'] = df['transaction_hash']
+        result['From'] = df['from_address']
+        result['To'] = df['to_address']
+        
+        # 方向标记
+        result['Direction'] = direction
+        
+        # 过滤无效金额
+        result = result[result['Amount'] > 0]
+        
+        return result
+    
+    def _identify_token(self, symbol: str, contract_address: str) -> str:
+        """识别代币类型"""
+        symbol_upper = symbol.upper()
+        contract_lower = contract_address.lower()
+        
+        # 根据链类型使用不同的合约地址
+        if self.chain == 'polygon':
+            # Polygon链上的合约地址
+            GGUSD_CONTRACT = '0xffffff9936bd58a008855b0812b44d2c8dffe2aa'
+            USDT_CONTRACT = '0xc2132d05d31c914a87c6611c10748aeb04b58e8f'  # USDT on Polygon
+            USDC_CONTRACT = '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359'  # USDC on Polygon
+        elif self.chain == 'ethereum':
+            # Ethereum链上的合约地址
+            USDT_CONTRACT = '0xdac17f958d2ee523a2206206994597c13d831ec7'  # USDT on Ethereum
+            USDC_CONTRACT = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'  # USDC on Ethereum
+            GGUSD_CONTRACT = None  # Ethereum链不支持GGUSD
+        else:
+            # BNB Chain上的合约地址
+            GGUSD_CONTRACT = '0xffffff9936bd58a008855b0812b44d2c8dffe2aa'
+            USDT_CONTRACT = '0x55d398326f99059ff775485246999027b3197955'  # USDT on BNB Chain
+            USDC_CONTRACT = '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'  # USDC on BNB Chain
+        
+        # 优先使用合约地址识别
+        if GGUSD_CONTRACT and contract_lower == GGUSD_CONTRACT.lower():
+            return 'GGUSD'
+        elif contract_lower == USDT_CONTRACT.lower():
+            return 'USDT'
+        elif contract_lower == USDC_CONTRACT.lower():
+            return 'USDC'
+        # 然后使用symbol识别
+        elif 'GGUSD' in symbol_upper:
+            return 'GGUSD'
         elif 'USDT' in symbol_upper:
             return 'USDT'
         elif 'USDC' in symbol_upper:
@@ -310,6 +539,7 @@ class SolanaFetcher(ChainDataFetcher):
     def __init__(self):
         super().__init__()
         self.chain_name = 'Solana'
+        self.chain = 'solana'  # 设置链类型
         
         # 优先使用 Helius Enhanced API
         self.helius_api_key = os.getenv('HELIUS_API_KEY', '')
@@ -321,29 +551,56 @@ class SolanaFetcher(ChainDataFetcher):
             log_message("警告: 未设置 HELIUS_API_KEY, Solana 数据获取可能失败")
             self.helius_api_url = None
     
-    def fetch_transactions(self, address: str, days: int = 100) -> pd.DataFrame:
+    def _identify_token(self, symbol: str, contract_address: str) -> str:
+        """识别代币类型"""
+        symbol_upper = symbol.upper()
+        contract_lower = contract_address.lower()
+        
+        # Solana链上的合约地址
+        USDT_CONTRACT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'  # USDT on Solana
+        USDC_CONTRACT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'  # USDC on Solana
+        GGUSD_CONTRACT = 'GGUSDyBUPFg5RrgWwqEqhXoha85iYGs6cL57SyK4G2Y7'  # GGUSD on Solana
+        
+        # 优先使用合约地址识别
+        if contract_lower == GGUSD_CONTRACT.lower():
+            return 'GGUSD'
+        elif contract_lower == USDT_CONTRACT.lower():
+            return 'USDT'
+        elif contract_lower == USDC_CONTRACT.lower():
+            return 'USDC'
+        # 然后使用symbol识别
+        elif 'GGUSD' in symbol_upper:
+            return 'GGUSD'
+        elif 'USDT' in symbol_upper:
+            return 'USDT'
+        elif 'USDC' in symbol_upper:
+            return 'USDC'
+        else:
+            return 'Other'
+    
+    def fetch_transactions(self, address: str, days: int = None) -> pd.DataFrame:
         """
-        抓取 Solana 地址的交易记录
+        抓取 Solana 地址的所有历史交易记录（不限制时间范围）
         
         Args:
             address: Solana 地址
-            days: 天数
+            days: 已弃用，保留兼容性
         
         Returns:
             DataFrame 格式的交易数据
         """
-        log_message(f"正在抓取 Solana 链的数据...")
+        log_message(f"正在抓取 Solana 链的所有历史数据...")
         
         if self.helius_api_key:
             # 使用组合方式: RPC 获取所有签名 + Enhanced API 解析
-            return self._fetch_with_helius_enhanced(address, days)
+            return self._fetch_with_helius_enhanced(address)
         else:
             log_message("  错误: 未配置 Helius API Key")
             return pd.DataFrame()
     
-    def _fetch_with_helius_enhanced(self, address: str, days: int) -> pd.DataFrame:
+    def _fetch_with_helius_enhanced(self, address: str) -> pd.DataFrame:
         """
-        使用 Helius RPC + Enhanced API 抓取交易历史
+        使用 Helius RPC + Enhanced API 抓取所有历史交易
         
         Solana 特殊处理: SPL token 转账发生在 Token Accounts 上,不是主地址
         步骤:
@@ -353,8 +610,6 @@ class SolanaFetcher(ChainDataFetcher):
         """
         log_message("  使用 Helius RPC + Enhanced API...")
         
-        cutoff_time = datetime.now() - timedelta(days=days)
-        cutoff_timestamp = int(cutoff_time.timestamp())
         rpc_url = f'https://mainnet.helius-rpc.com/?api-key={self.helius_api_key}'
         
         try:
@@ -401,7 +656,9 @@ class SolanaFetcher(ChainDataFetcher):
                 
                 # 获取该 Token Account 的所有交易签名
                 before_signature = None
-                for iteration in range(20):
+                iteration = 0
+                while True:
+                    iteration += 1
                     rpc_payload = {
                         "jsonrpc": "2.0",
                         "id": 1,
@@ -422,31 +679,31 @@ class SolanaFetcher(ChainDataFetcher):
                     if not signatures:
                         break
                     
-                    # 过滤时间范围内的签名
+                    # 收集所有签名
                     valid_signatures = []
                     for sig in signatures:
-                        block_time = sig.get('blockTime', 0)
-                        if block_time >= cutoff_timestamp:
-                            valid_signatures.append(sig['signature'])
-                        else:
-                            break
+                        valid_signatures.append(sig['signature'])
                     
                     all_signatures.extend(valid_signatures)
                     
-                    if len(valid_signatures) < len(signatures) or len(signatures) < 1000:
+                    # 如果返回的交易数少于1000，说明已经到达最早记录
+                    if len(signatures) < 1000:
                         break
                     
                     before_signature = signatures[-1]['signature']
                     time.sleep(0.1)
-                
-                log_message(f"    {token_name}: {len([s for s in all_signatures if s not in [sig for sig in all_signatures[:len(all_signatures)-len(valid_signatures)]]])} 个签名")
+                    
+                    # 安全上限，避免无限循环
+                    if iteration >= 1000:
+                        log_message(f"    {token_name}: 达到1000页上限，停止抓取")
+                        break
             
             # 去重
             all_signatures = list(set(all_signatures))
             log_message(f"  总计(去重后): {len(all_signatures)} 个交易签名")
             
             if not all_signatures:
-                log_message(f"  Solana: 最近{days}天无交易记录")
+                log_message(f"  Solana: 无交易记录")
                 return pd.DataFrame()
             
             # 步骤3: 批量解析交易 (使用 Enhanced API)
@@ -489,7 +746,7 @@ class SolanaFetcher(ChainDataFetcher):
                 time.sleep(0.2)
             
             if not all_token_transfers:
-                log_message(f"  Solana: 最近{days}天无 token 转账记录")
+                log_message(f"  Solana: 无 token 转账记录")
                 return pd.DataFrame()
             
             # 转换为 DataFrame
@@ -502,14 +759,18 @@ class SolanaFetcher(ChainDataFetcher):
             result['Chain'] = 'Solana'
             result['TxHash'] = df['signature']
             result['From'] = df['fromUserAccount']
+            result['To'] = address  # 目标地址
+            result['Direction'] = 'inflow'  # 都是转入交易
             
             # 识别代币类型
             USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
             GGUSD_MINT = 'GGUSDyBUPFg5RrgWwqEqhXoha85iYGs6cL57SyK4G2Y7'
+            USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'
             
             result['Asset'] = df['mint'].apply(lambda x: 
                 'USDC' if x == USDC_MINT 
-                else ('GGUSD' if x == GGUSD_MINT else 'Other'))
+                else ('GGUSD' if x == GGUSD_MINT 
+                else ('USDT' if x == USDT_MINT else 'Other')))
             
             # 过滤有效数据
             result = result.dropna(subset=['Amount', 'DateTime'])
@@ -542,9 +803,6 @@ class SolanaFetcher(ChainDataFetcher):
                 df['DateTime'] = df['DateTime'].dt.tz_localize(None)
             
             # 过滤时间范围
-            cutoff_time = datetime.now() - timedelta(days=days)
-            df = df[df['DateTime'] >= cutoff_time]
-            
             # 标准化数据格式
             result = pd.DataFrame()
             result['DateTime'] = df['DateTime']
@@ -556,11 +814,12 @@ class SolanaFetcher(ChainDataFetcher):
             # 识别代币类型
             USDC_ADDRESS = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
             GGUSD_ADDRESS = 'GGUSDyBUPFg5RrgWwqEqhXoha85iYGs6cL57SyK4G2Y7'
+            USDT_ADDRESS = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'
             
             result['Asset'] = df['Token Address'].apply(lambda x: 
                 'USDC' if USDC_ADDRESS in str(x) 
                 else ('GGUSD' if GGUSD_ADDRESS in str(x)
-                else 'Other'))
+                else ('USDT' if USDT_ADDRESS in str(x) else 'Other')))
             
             # 过滤有效数据
             result = result.dropna(subset=['Amount', 'DateTime'])
@@ -586,9 +845,6 @@ class SolanaFetcher(ChainDataFetcher):
         page_size = 50
         max_pages = 100
         
-        cutoff_time = datetime.now() - timedelta(days=days)
-        cutoff_timestamp = int(cutoff_time.timestamp())
-        
         try:
             while page <= max_pages:
                 # 获取 SPL token transfers (使用 v1 API)
@@ -607,20 +863,14 @@ class SolanaFetcher(ChainDataFetcher):
                 if not transactions or not isinstance(transactions, list):
                     break
                 
-                # 检查时间范围
-                has_old_tx = False
+                # 只保留转入交易 (dst 是目标地址)
                 for tx in transactions:
-                    tx_time = tx.get('blockTime', 0)
-                    if tx_time < cutoff_timestamp:
-                        has_old_tx = True
-                        break
-                    # 只保留转入交易 (dst 是目标地址)
                     if tx.get('dst') == address:
                         all_transactions.append(tx)
                 
                 log_message(f"  Solscan: 已获取 {len(all_transactions)} 条交易...")
                 
-                if has_old_tx or len(transactions) < page_size:
+                if len(transactions) < page_size:
                     break
                 
                 page += 1
@@ -684,8 +934,8 @@ class SolanaFetcher(ChainDataFetcher):
         log_message(f"  Solana: 成功获取 {len(df)} 条有效交易")
         return df
     
-    def _fetch_with_helius(self, address: str, days: int) -> pd.DataFrame:
-        """使用 Helius Enhanced API 抓取数据"""
+    def _fetch_with_helius(self, address: str, days: int = None) -> pd.DataFrame:
+        """使用 Helius Enhanced API 抓取数据（不限制时间范围）"""
         url = f"https://api.helius.xyz/v0/addresses/{address}/transactions"
         params = {
             'api-key': self.helius_api_key,
@@ -695,10 +945,10 @@ class SolanaFetcher(ChainDataFetcher):
         all_transactions = []
         before_signature = None
         
-        # 计算截止时间
-        cutoff_time = datetime.now() - timedelta(days=days)
-        
-        for _ in range(10):  # 最多获取10页
+        # 持续翻页直到没有更多数据
+        iteration = 0
+        while True:
+            iteration += 1
             if before_signature:
                 params['before'] = before_signature
             
@@ -710,19 +960,20 @@ class SolanaFetcher(ChainDataFetcher):
                 if not transactions:
                     break
                 
-                for tx in transactions:
-                    tx_time = datetime.fromtimestamp(tx.get('timestamp', 0))
-                    if tx_time < cutoff_time:
-                        break
-                    all_transactions.append(tx)
+                # 添加所有交易，不进行时间过滤
+                all_transactions.extend(transactions)
                 
-                # 如果最后一笔交易时间早于截止时间，停止获取
-                last_tx_time = datetime.fromtimestamp(transactions[-1].get('timestamp', 0))
-                if last_tx_time < cutoff_time:
+                # 如果返回的交易数少于限制，说明已经到达最早记录
+                if len(transactions) < params['limit']:
                     break
                 
                 before_signature = transactions[-1].get('signature')
                 time.sleep(0.2)
+                
+                # 安全上限，避免无限循环
+                if iteration >= 1000:
+                    log_message(f"  Helius API: 达到1000页上限，停止抓取")
+                    break
             
             except requests.exceptions.RequestException as e:
                 log_message(f"Helius API 请求失败: {e}")
@@ -734,12 +985,9 @@ class SolanaFetcher(ChainDataFetcher):
         
         return self._process_solana_data(all_transactions, address)
     
-    def _fetch_with_rpc(self, address: str, days: int) -> pd.DataFrame:
-        """使用标准 RPC 抓取数据（支持分页）"""
+    def _fetch_with_rpc(self, address: str) -> pd.DataFrame:
+        """使用标准 RPC 抓取所有历史数据（支持分页）"""
         log_message("  使用标准 RPC 方法...")
-        
-        cutoff_time = datetime.now() - timedelta(days=days)
-        cutoff_timestamp = int(cutoff_time.timestamp())
         
         all_transactions = []
         before_signature = None
@@ -766,20 +1014,6 @@ class SolanaFetcher(ChainDataFetcher):
                 signatures = data.get('result', [])
                 
                 if not signatures:
-                    break
-                
-                # 检查最旧的交易时间
-                oldest_sig_time = signatures[-1].get('blockTime', 0)
-                if oldest_sig_time and oldest_sig_time < cutoff_timestamp:
-                    # 只处理在时间范围内的签名
-                    signatures = [sig for sig in signatures if sig.get('blockTime', 0) >= cutoff_timestamp]
-                    if signatures:
-                        # 获取这批交易的详细信息
-                        for sig_info in signatures:
-                            tx_detail = self._get_transaction_detail(sig_info.get('signature'))
-                            if tx_detail:
-                                all_transactions.append(tx_detail)
-                        log_message(f"  Solana: 已获取 {len(all_transactions)} 条交易（已到达目标时间）")
                     break
                 
                 # 获取这批交易的详细信息
@@ -902,15 +1136,18 @@ class SolanaFetcher(ChainDataFetcher):
 class GMTPayDataFetcher:
     """GMT Pay 数据抓取主类"""
     
-    # GMT Pay 收款地址
+    # GMT Pay 收款地址 (监控 inflow)
     EVM_ADDRESS = '0x523ffC4D9782dC8af35664625fBB3e1d8e8ec6cb'
     SOLANA_ADDRESS = 'G7bMBQegH3RyRjt1QZu3o6BA2ZQQ7shdJ7zGrw7PwNEL'
     
+    # Polygon 注销返还地址 (监控 outflow)
+    POLYGON_REFUND_ADDRESS = '0x6f724c70500d899883954a5ac2e6f38d25422f60'
+    
     def __init__(self):
         self.fetchers = {
-            'ethereum': EtherscanFetcher('ethereum'),
-            'bsc': EtherscanFetcher('bsc'),
-            'polygon': EtherscanFetcher('polygon'),
+            'ethereum': MoralisFetcher('ethereum'),
+            'bsc': MoralisFetcher('bsc'),
+            'polygon': MoralisFetcher('polygon'),
             'solana': SolanaFetcher()
         }
     
@@ -944,6 +1181,15 @@ class GMTPayDataFetcher:
                 all_data.append(df_solana)
         except Exception as e:
             log_message(f"抓取 Solana 数据失败: {e}")
+        
+        # 抓取 Polygon outflow 数据 (注销返还)
+        try:
+            polygon_fetcher = self.fetchers['polygon']
+            df_refund = polygon_fetcher.fetch_transactions(self.POLYGON_REFUND_ADDRESS, days=days, direction='outflow')
+            if not df_refund.empty:
+                all_data.append(df_refund)
+        except Exception as e:
+            log_message(f"抓取 Polygon outflow 数据失败: {e}")
         
         # 合并所有数据
         if not all_data:

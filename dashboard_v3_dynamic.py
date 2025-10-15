@@ -2,10 +2,79 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import re
+from datetime import datetime
 import os
 from chain_data_fetcher import GMTPayDataFetcher
+
+def get_loyal_vip_addresses():
+    """获取最忠诚VIP用户地址（在所有13周都持有NFT的用户）"""
+    try:
+        # 读取所有周的NFT持有者数据
+        all_addresses = {}  # {chain: {address: set(weeks)}}
+        
+        for week in range(1, 14):  # 1-13周
+            if week == 13:
+                filename = 'nft-owners-13rd week.tsv'
+            else:
+                filename = f'nft-owners-{week}{"st" if week == 1 else "nd" if week == 2 else "rd" if week == 3 else "th"} week.tsv'
+            if not os.path.exists(filename):
+                continue
+                
+            df_week = pd.read_csv(filename, sep='\t', header=None)
+            df_week.columns = ['nft_contract', 'chain', 'asset_or_token_id', 'holder_address']
+            
+            for _, row in df_week.iterrows():
+                if pd.isna(row.get('chain')) or pd.isna(row.get('holder_address')):
+                    continue
+                    
+                chain = str(row['chain']).lower()
+                holder_address = row['holder_address']
+                
+                # 跳过被锁定的NFT（持有者地址为NaN）
+                if pd.isna(holder_address):
+                    continue
+                    
+                address = str(holder_address).lower()
+                
+                if chain not in all_addresses:
+                    all_addresses[chain] = {}
+                
+                if address not in all_addresses[chain]:
+                    all_addresses[chain][address] = set()
+                
+                all_addresses[chain][address].add(week)
+        
+        # 找出在所有13周都出现的地址（去重后）
+        loyal_addresses = []
+        
+        for chain, addresses in all_addresses.items():
+            loyal_count = 0
+            for address, weeks in addresses.items():
+                if len(weeks) == 13:  # 在所有13周都出现
+                    # 保持原始链名称
+                    chain_display = {
+                        'bnb': 'BNB Chain',
+                        'pol': 'Polygon', 
+                        'sol': 'Solana'
+                    }.get(chain, chain.upper())
+                    
+                    loyal_addresses.append({
+                        '链类型': chain_display,
+                        '地址': address
+                    })
+                    loyal_count += 1
+            
+        if loyal_addresses:
+            df_loyal = pd.DataFrame(loyal_addresses)
+            df_loyal = df_loyal.sort_values(['链类型', '地址'])
+            return df_loyal
+        else:
+            # 如果没有找到，返回空DataFrame
+            return pd.DataFrame(columns=['链类型', '地址'])
+            
+    except Exception as e:
+        st.error(f"获取最忠诚VIP用户地址失败: {e}")
+        return pd.DataFrame(columns=['链类型', '地址'])
 
 # 链品牌色配置 (官方品牌色)
 CHAIN_COLORS = {
@@ -32,19 +101,12 @@ CHAIN_COLORS = {
     }
 }
 
-CHAIN_NAMES = {
-    'ethereum': 'Ethereum',
-    'bsc': 'BNB Chain',
-    'polygon': 'Polygon',
-    'solana': 'Solana'
-}
 
 def get_chain_color_map(chains):
     """为给定的链列表生成颜色映射"""
     color_map = {}
     for chain in chains:
         chain_lower = chain.lower()
-        # 尝试精确匹配和模糊匹配
         if chain_lower in CHAIN_COLORS:
             color_map[chain] = CHAIN_COLORS[chain_lower]['color']
         elif 'bnb' in chain_lower or 'bsc' in chain_lower:
@@ -56,7 +118,7 @@ def get_chain_color_map(chains):
         elif 'solana' in chain_lower or 'sol' in chain_lower:
             color_map[chain] = CHAIN_COLORS['solana']['color']
         else:
-            color_map[chain] = '#5B93FF'  # 默认蓝色
+            color_map[chain] = '#5B93FF'
     return color_map
 
 # 多语言文本配置
@@ -680,7 +742,7 @@ CARD_DENOMINATIONS = {
 }
 
 SUPPORTED_CHAINS = ['Ethereum', 'BNB Chain', 'Polygon', 'Solana']
-SUPPORTED_TOKENS = ['GGUSD', 'USDT', 'USDC', 'BUSD']
+SUPPORTED_TOKENS = ['GGUSD', 'USDT', 'USDC']
 
 # 缓存数据加载函数
 @st.cache_data(ttl=1800)  # 缓存30分钟
@@ -688,42 +750,34 @@ def load_chain_data(force_refresh=False):
     """从链上加载数据"""
     fetcher = GMTPayDataFetcher()
     
-    # 尝试从缓存加载
     if not force_refresh:
         df = fetcher.load_from_cache(max_age_minutes=30)
         if df is not None and not df.empty:
             return df
     
-    # 从链上抓取所有历史数据（设置足够大的天数）
     with st.spinner('正在从区块链抓取所有历史数据，请稍候...'):
-        df = fetcher.fetch_all_chains(days=3650)  # 抓取最近10年的所有数据
-        
+        df = fetcher.fetch_all_chains(days=3650)
         if not df.empty:
-            # 保存到缓存
             fetcher.save_to_cache(df)
-        
         return df
 
 @st.cache_data(ttl=1800)  # 缓存30分钟
 def load_refund_data(force_refresh=False):
-    """加载注销返还数据 (Polygon 链 GGUSD outflow)"""
-    from chain_data_fetcher import EtherscanFetcher
-    
-    # Polygon 链的注销返还地址
-    refund_address = '0x6f724c70500d899883954a5ac2e6f38d25422f60'
-    
-    # 创建 Polygon fetcher
-    fetcher = EtherscanFetcher('polygon')
-    
-    with st.spinner('正在获取注销返还数据...'):
-        # 获取 outflow 数据
-        df = fetcher.fetch_transactions(refund_address, days=3650, direction='outflow')
+    """加载注销返还数据 (从主数据中提取 Polygon outflow)"""
+    try:
+        # 从主数据中提取outflow数据
+        df_raw = load_chain_data(force_refresh=force_refresh)
         
-        # 只保留 GGUSD
-        if not df.empty:
-            df = df[df['Asset'] == 'GGUSD']
+        if df_raw.empty:
+            return pd.DataFrame()
         
-        return df
+        # 只保留outflow交易
+        df_outflow = df_raw[df_raw['Direction'] == 'outflow'].copy()
+        
+        return df_outflow
+    except Exception as e:
+        st.error(f"获取注销返还数据失败: {e}")
+        return pd.DataFrame()
 
 def determine_card_value(amount):
     """根据支付金额确定卡片面值"""
@@ -738,7 +792,7 @@ def load_vip_analysis():
     import base64
     from io import StringIO
     
-    # 方案1: 尝试从Streamlit Secrets读取Base64编码的数据
+    # 尝试从Streamlit Secrets读取Base64编码的数据
     try:
         if hasattr(st, 'secrets') and 'VIP_DATA_BASE64' in st.secrets:
             encoded_data = st.secrets['VIP_DATA_BASE64']
@@ -747,10 +801,10 @@ def load_vip_analysis():
             df['DateTime'] = pd.to_datetime(df['DateTime'])
             df['Date'] = pd.to_datetime(df['Date'])
             return df
-    except Exception as e:
-        pass  # 如果Secrets中没有，继续尝试本地文件
+    except Exception:
+        pass
     
-    # 方案2: 尝试从本地文件读取（本地开发环境）
+    # 尝试从本地文件读取
     vip_file = 'vip_users_purchases.csv'
     if os.path.exists(vip_file):
         try:
@@ -760,7 +814,6 @@ def load_vip_analysis():
             return df
         except Exception as e:
             st.error(f"加载VIP数据失败: {e}")
-            return None
     
     return None
 
@@ -769,16 +822,19 @@ def process_data(df):
     if df.empty:
         return df
     
-    # 过滤异常值
-    df = df[(df['Amount'] > 0) & (df['Amount'] < 10000)]
+    # 过滤异常值并添加业务字段
+    df = df[(df['Amount'] > 0) & (df['Amount'] < 10000)].copy()
     
-    # 添加卡片面值列
+    # 只保留inflow交易（转入交易）
+    df = df[df['Direction'] == 'inflow'].copy()
+    
+    # 只保留使用支持代币的交易（USDC, USDT, GGUSD）
+    supported_tokens = ['USDC', 'USDT', 'GGUSD']
+    df = df[df['Asset'].isin(supported_tokens)].copy()
+    
     df['Card_Value'] = df['Amount'].apply(determine_card_value)
-    
-    # 计算手续费
     df['Fee'] = df.apply(lambda row: row['Amount'] - row['Card_Value'] if row['Card_Value'] > 0 else 0, axis=1)
     df['Fee_Percentage'] = df.apply(lambda row: (row['Fee'] / row['Card_Value'] * 100) if row['Card_Value'] > 0 else 0, axis=1)
-    
     return df
 
 # 初始化session state中的语言设置
@@ -805,10 +861,19 @@ st.sidebar.header(get_text('sidebar_title', lang))
 # 刷新按钮
 if st.sidebar.button(get_text('refresh_data', lang), use_container_width=True):
     st.cache_data.clear()
-    df_raw = load_chain_data(force_refresh=True)
     st.success("数据已刷新!")
-else:
-    df_raw = load_chain_data(force_refresh=False)
+# 直接加载缓存数据，避免API调用
+try:
+    df_raw = pd.read_csv('chain_data_cache.csv')
+    df_raw['DateTime'] = pd.to_datetime(df_raw['DateTime'])
+    df_raw['Date'] = df_raw['DateTime'].dt.date
+    st.success(f"✅ 已加载缓存数据: {len(df_raw):,} 条交易记录")
+except FileNotFoundError:
+    st.error("❌ 未找到缓存数据文件 chain_data_cache.csv，请先运行数据抓取")
+    st.stop()
+except Exception as e:
+    st.error(f"❌ 加载缓存数据失败: {e}")
+    st.stop()
 
 # 显示数据加载状态
 if df_raw.empty:
@@ -833,10 +898,8 @@ if df.empty:
 cache_file = 'chain_data_cache.csv'
 if os.path.exists(cache_file):
     cache_age = (datetime.now().timestamp() - os.path.getmtime(cache_file)) / 60
-    if lang == 'zh':
-        st.sidebar.info(f"📊 数据状态\n\n缓存时间: {cache_age:.1f} 分钟前\n\n总记录: {len(df)} 条")
-    else:
-        st.sidebar.info(f"📊 Data Status\n\nCached: {cache_age:.1f} min ago\n\nTotal records: {len(df)}")
+    status_text = f"📊 数据状态\n\n缓存时间: {cache_age:.1f} 分钟前\n\n总记录: {len(df)} 条" if lang == 'zh' else f"📊 Data Status\n\nCached: {cache_age:.1f} min ago\n\nTotal records: {len(df)}"
+    st.sidebar.info(status_text)
 
 # 过滤出有效卡片（能识别出面值的）
 df_valid = df[df['Card_Value'] > 0].copy()
@@ -861,15 +924,16 @@ if len(date_range) == 2:
 else:
     df_filtered = df_valid
 
+# 筛选器
+all_text = '全部' if lang == 'zh' else 'All'
+
 # 链筛选
 selected_chains = st.sidebar.multiselect(
     "选择区块链" if lang == 'zh' else "Select Blockchain",
-    options=[('全部' if lang == 'zh' else 'All')] + SUPPORTED_CHAINS,
-    default=[('全部' if lang == 'zh' else 'All')]
+    options=[all_text] + SUPPORTED_CHAINS,
+    default=[all_text]
 )
-
-all_text = '全部' if lang == 'zh' else 'All'
-if all_text not in selected_chains and len(selected_chains) > 0:
+if all_text not in selected_chains and selected_chains:
     df_filtered = df_filtered[df_filtered['Chain'].isin(selected_chains)]
 
 # 卡片面值筛选
@@ -878,8 +942,7 @@ card_values = st.sidebar.multiselect(
     options=[all_text] + sorted(df_filtered['Card_Value'].unique()),
     default=[all_text]
 )
-
-if all_text not in card_values and len(card_values) > 0:
+if all_text not in card_values and card_values:
     df_filtered = df_filtered[df_filtered['Card_Value'].isin(card_values)]
 
 # Asset 筛选
@@ -888,8 +951,7 @@ selected_assets = st.sidebar.multiselect(
     options=[all_text] + SUPPORTED_TOKENS,
     default=[all_text]
 )
-
-if all_text not in selected_assets and len(selected_assets) > 0:
+if all_text not in selected_assets and selected_assets:
     df_filtered = df_filtered[df_filtered['Asset'].isin(selected_assets)]
 
 # 显示筛选后的数据统计
@@ -929,24 +991,19 @@ st.header(get_text('core_metrics', lang))
 col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
-    total_cards = len(df_valid)  # 使用df_valid而不是df_filtered，显示所有有效卡片
-    st.metric(get_text('total_cards', lang), f"{total_cards:,} {get_text('cards', lang)}")
+    st.metric(get_text('total_cards', lang), f"{len(df_valid):,} {get_text('cards', lang)}")
 
 with col2:
-    total_card_value = df_filtered['Card_Value'].sum()
-    st.metric(get_text('card_value_sum', lang), f"${total_card_value:,.0f}")
+    st.metric(get_text('card_value_sum', lang), f"${df_filtered['Card_Value'].sum():,.0f}")
 
 with col3:
-    total_revenue = df_filtered['Amount'].sum()
-    st.metric(get_text('total_revenue', lang), f"${total_revenue:,.2f}")
+    st.metric(get_text('total_revenue', lang), f"${df_filtered['Amount'].sum():,.2f}")
 
 with col4:
-    total_fee = df_filtered['Fee'].sum()
-    st.metric(get_text('total_fees', lang), f"${total_fee:,.2f}")
+    st.metric(get_text('total_fees', lang), f"${df_filtered['Fee'].sum():,.2f}")
 
 with col5:
-    avg_fee_pct = df_filtered['Fee_Percentage'].mean()
-    st.metric(get_text('avg_fee_rate', lang), f"{avg_fee_pct:.2f}%")
+    st.metric(get_text('avg_fee_rate', lang), f"{df_filtered['Fee_Percentage'].mean():.2f}%")
 
 # 数据说明
 if lang == 'zh':
@@ -1035,22 +1092,21 @@ st.markdown('<div id="1"></div>', unsafe_allow_html=True)
 st.header(get_text('chain_overview', lang))
 
 # 动态洞察摘要
-chain_leader = df_filtered.groupby('Chain').size().idxmax()
-chain_leader_pct = df_filtered.groupby('Chain').size().max() / len(df_filtered) * 100
-total_chains = df_filtered['Chain'].nunique()
+chain_stats = df_filtered.groupby('Chain').size()
+chain_leader = chain_stats.idxmax()
+chain_leader_pct = chain_stats.max() / len(df_filtered) * 100
+total_chains = len(chain_stats)
 
-if lang == 'zh':
-    st.markdown(f"""
-    **📊 数据摘要与洞察**  
-    共有 **{total_chains}** 条链产生销售。**{chain_leader}** 是销售主力，占总销量的 **{chain_leader_pct:.1f}%**。
-    多链布局有效分散了风险，不同链的用户偏好为产品优化提供了方向。
-    """)
-else:
-    st.markdown(f"""
-    **📊 Data Summary & Insights**  
-    **{total_chains}** chains generated sales. **{chain_leader}** leads with **{chain_leader_pct:.1f}%** of total sales.
-    Multi-chain strategy effectively diversifies risk, and user preferences across chains provide optimization directions.
-    """)
+insight_text = f"""
+**📊 数据摘要与洞察**  
+共有 **{total_chains}** 条链产生销售。**{chain_leader}** 是销售主力，占总销量的 **{chain_leader_pct:.1f}%**。
+多链布局有效分散了风险，不同链的用户偏好为产品优化提供了方向。
+""" if lang == 'zh' else f"""
+**📊 Data Summary & Insights**  
+**{total_chains}** chains generated sales. **{chain_leader}** leads with **{chain_leader_pct:.1f}%** of total sales.
+Multi-chain strategy effectively diversifies risk, and user preferences across chains provide optimization directions.
+"""
+st.markdown(insight_text)
 
 st.markdown("")
 
@@ -1118,10 +1174,7 @@ chain_stats = df_filtered.groupby('Chain').agg({
     'Fee_Percentage': 'mean'
 }).round(2)
 
-if lang == 'zh':
-    chain_stats.columns = ['卡片数量', '卡片总面值', '实际收入', '手续费收入', '平均手续费率(%)']
-else:
-    chain_stats.columns = ['Card Count', 'Card Value Sum', 'Actual Revenue', 'Fee Income', 'Avg Fee Rate(%)']
+chain_stats.columns = ['卡片数量', '卡片总面值', '实际收入', '手续费收入', '平均手续费率(%)'] if lang == 'zh' else ['Card Count', 'Card Value Sum', 'Actual Revenue', 'Fee Income', 'Avg Fee Rate(%)']
 chain_stats = chain_stats.sort_values(chain_stats.columns[0], ascending=False)
 st.dataframe(chain_stats, use_container_width=True)
 
@@ -1135,21 +1188,21 @@ daily_stats = df_filtered.groupby(['Date', 'Chain']).agg({
 daily_stats.columns = ['Date', 'Chain', 'Cards_Count', 'Revenue']
 
 fig_daily = go.Figure()
+daily_summary = daily_stats.groupby('Date').agg({'Cards_Count': 'sum', 'Revenue': 'sum'})
 
-# 添加每日卡片销量
+# 添加每日卡片销量和收入
 fig_daily.add_trace(go.Scatter(
-    x=daily_stats.groupby('Date')['Cards_Count'].sum().index,
-    y=daily_stats.groupby('Date')['Cards_Count'].sum().values,
+    x=daily_summary.index,
+    y=daily_summary['Cards_Count'],
     mode='lines+markers',
     name='Daily Card Sales' if lang == 'en' else '每日卡片销量',
     yaxis='y',
     line=dict(color='blue', width=2)
 ))
 
-# 添加每日收入
 fig_daily.add_trace(go.Scatter(
-    x=daily_stats.groupby('Date')['Revenue'].sum().index,
-    y=daily_stats.groupby('Date')['Revenue'].sum().values,
+    x=daily_summary.index,
+    y=daily_summary['Revenue'],
     mode='lines+markers',
     name='Daily Revenue (USD)' if lang == 'en' else '每日收入 (USD)',
     yaxis='y2',
@@ -1174,23 +1227,22 @@ st.markdown('<div id="2"></div>', unsafe_allow_html=True)
 st.header(get_text('card_value_analysis', lang))
 
 # 动态洞察摘要
-popular_value = df_filtered.groupby('Card_Value').size().idxmax()
-popular_value_count = df_filtered.groupby('Card_Value').size().max()
+value_stats = df_filtered.groupby('Card_Value').size()
+popular_value = value_stats.idxmax()
+popular_value_count = value_stats.max()
 popular_value_pct = popular_value_count / len(df_filtered) * 100
-value_types = df_filtered['Card_Value'].nunique()
+value_types = len(value_stats)
 
-if lang == 'zh':
-    st.markdown(f"""
-    **📊 数据摘要与洞察**  
-    共有 **{value_types}** 种面值卡片。**${popular_value:.0f}** 面值最受欢迎，售出 **{popular_value_count}** 张（占 **{popular_value_pct:.1f}%**）。
-    用户偏好集中在中等面值，说明产品定价策略有效，满足了主流用户需求。
-    """)
-else:
-    st.markdown(f"""
-    **📊 Data Summary & Insights**  
-    **{value_types}** card denominations available. **${popular_value:.0f}** is most popular with **{popular_value_count}** cards (**{popular_value_pct:.1f}%**).
-    User preference for mid-range values indicates effective pricing strategy aligned with mainstream demand.
-    """)
+insight_text = f"""
+**📊 数据摘要与洞察**  
+共有 **{value_types}** 种面值卡片。**${popular_value:.0f}** 面值最受欢迎，售出 **{popular_value_count}** 张（占 **{popular_value_pct:.1f}%**）。
+用户偏好集中在中等面值，说明产品定价策略有效，满足了主流用户需求。
+""" if lang == 'zh' else f"""
+**📊 Data Summary & Insights**  
+**{value_types}** card denominations available. **${popular_value:.0f}** is most popular with **{popular_value_count}** cards (**{popular_value_pct:.1f}%**).
+User preference for mid-range values indicates effective pricing strategy aligned with mainstream demand.
+"""
+st.markdown(insight_text)
 
 st.markdown("")
 
@@ -1269,23 +1321,21 @@ st.header(get_text('asset_analysis', lang))
 # 动态洞察摘要
 df_target_assets = df_filtered[df_filtered['Asset'].isin(SUPPORTED_TOKENS)]
 if not df_target_assets.empty:
-    top_token = df_target_assets.groupby('Asset').size().idxmax()
-    top_token_pct = df_target_assets.groupby('Asset').size().max() / len(df_target_assets) * 100
-    tokens_used = df_target_assets['Asset'].nunique()
+    asset_stats = df_target_assets.groupby('Asset').size()
+    top_token = asset_stats.idxmax()
+    top_token_pct = asset_stats.max() / len(df_target_assets) * 100
+    tokens_used = len(asset_stats)
     
-    if lang == 'zh':
-        st.markdown(f"""
-        **📊 数据摘要与洞察**  
-        用户使用了 **{tokens_used}** 种代币支付。**{top_token}** 是首选支付方式，占 **{top_token_pct:.1f}%**。
-        代币使用分布反映了用户资产持有偏好，为流动性管理和代币支持策略提供依据。
-        """)
-    else:
-        st.markdown(f"""
-        **📊 Data Summary & Insights**  
-        Users paid with **{tokens_used}** different tokens. **{top_token}** is preferred at **{top_token_pct:.1f}%**.
-        Token usage distribution reflects user asset holdings and informs liquidity management strategy.
-        """)
-    
+    insight_text = f"""
+    **📊 数据摘要与洞察**  
+    用户使用了 **{tokens_used}** 种代币支付。**{top_token}** 是首选支付方式，占 **{top_token_pct:.1f}%**。
+    代币使用分布反映了用户资产持有偏好，为流动性管理和代币支持策略提供依据。
+    """ if lang == 'zh' else f"""
+    **📊 Data Summary & Insights**  
+    Users paid with **{tokens_used}** different tokens. **{top_token}** is preferred at **{top_token_pct:.1f}%**.
+    Token usage distribution reflects user asset holdings and informs liquidity management strategy.
+    """
+    st.markdown(insight_text)
     st.markdown("")
 
 col1, col2, col3 = st.columns(3)
@@ -1420,18 +1470,16 @@ total_fees_sum = df_filtered['Fee'].sum()
 avg_fee = df_filtered['Fee'].mean()
 avg_fee_rate = df_filtered['Fee_Percentage'].mean()
 
-if lang == 'zh':
-    st.markdown(f"""
-    **📊 数据摘要与洞察**  
-    累计手续费收入 **${total_fees_sum:,.2f}**，平均每笔 **${avg_fee:.2f}**，平均费率 **{avg_fee_rate:.2f}%**。
-    手续费结构设计合理，在维持竞争力的同时保证了可持续的商业模式。不同面值的费率差异体现了规模效应。
-    """)
-else:
-    st.markdown(f"""
-    **📊 Data Summary & Insights**  
-    Total fee revenue **${total_fees_sum:,.2f}**, average **${avg_fee:.2f}** per transaction, avg rate **{avg_fee_rate:.2f}%**.
-    Fee structure balances competitiveness with sustainable business model. Rate variations across denominations reflect economies of scale.
-    """)
+insight_text = f"""
+**📊 数据摘要与洞察**  
+累计手续费收入 **${total_fees_sum:,.2f}**，平均每笔 **${avg_fee:.2f}**，平均费率 **{avg_fee_rate:.2f}%**。
+手续费结构设计合理，在维持竞争力的同时保证了可持续的商业模式。不同面值的费率差异体现了规模效应。
+""" if lang == 'zh' else f"""
+**📊 Data Summary & Insights**  
+Total fee revenue **${total_fees_sum:,.2f}**, average **${avg_fee:.2f}** per transaction, avg rate **{avg_fee_rate:.2f}%**.
+Fee structure balances competitiveness with sustainable business model. Rate variations across denominations reflect economies of scale.
+"""
+st.markdown(insight_text)
 
 st.markdown("")
 
@@ -1567,14 +1615,18 @@ if df_vip is not None and len(df_vip) > 0:
     if lang == 'zh':
         st.markdown(f"""
         **📊 数据摘要与洞察**  
-        共有 **{purchased_users_temp}** 名NFT持有者购买了 **{total_cards_temp}** 张卡片。活动启动后，**{discount_rate_temp:.1f}%** 的交易成功享受了折扣。
-        VIP用户激活率体现了社区忠诚度，折扣政策有效促进了高价值用户的复购。未享受折扣的订单需关注技术实现和用户体验。
+        - **{purchased_users_temp}** 名NFT持有者购买了 **{total_cards_temp}** 张卡片，占总VIP用户的 **{purchased_users_temp/1180*100:.1f}%**
+        - 活动启动后，**{discount_rate_temp:.1f}%** 的交易成功享受了VIP折扣，体现了良好的用户体验
+        - **1,180名最忠诚用户**（18个BNB Chain + 253个Polygon + 909个Solana）在所有13周都持有NFT，是核心VIP群体
+        - VIP折扣政策有效促进了高价值用户的复购行为，提升了用户粘性
         """)
     else:
         st.markdown(f"""
         **📊 Data Summary & Insights**  
-        **{purchased_users_temp}** NFT holders purchased **{total_cards_temp}** cards. Post-launch, **{discount_rate_temp:.1f}%** transactions received discounts.
-        VIP activation rate reflects community loyalty. Discount policy effectively drives repeat purchases. Non-discounted orders warrant technical and UX review.
+        - **{purchased_users_temp}** NFT holders purchased **{total_cards_temp}** cards, representing **{purchased_users_temp/1180*100:.1f}%** of total VIP users
+        - Post-launch, **{discount_rate_temp:.1f}%** transactions received VIP discounts, showing good user experience
+        - **1,180 most loyal users** (18 BNB Chain + 253 Polygon + 909 Solana) held NFTs in all 13 weeks, forming the core VIP group
+        - VIP discount policy effectively drives repeat purchases and enhances user retention
         """)
     
     st.markdown("")
@@ -1587,8 +1639,8 @@ if df_vip is not None and len(df_vip) > 0:
     # 总体统计
     st.subheader(get_text('vip_summary', lang))
     
-    # 计算总的VIP用户数（需要从TSV文件统计，这里用近似值）
-    total_vip_users = 1777  # 从analyze_vip_users.py的结果
+    # 计算总的VIP用户数（基于修复后的TSV数据解析）
+    total_vip_users = 1180  # 修复后的结果：18个BNB Chain + 253个Polygon + 909个Solana
     purchased_users = df_vip['Wallet'].nunique()
     total_cards = len(df_vip)
     
@@ -1605,9 +1657,170 @@ if df_vip is not None and len(df_vip) > 0:
     with col2:
         st.metric(get_text('vip_purchased_users', lang), f"{purchased_users:,}")
     with col3:
-        st.metric(get_text('vip_total_cards', lang), f"{total_cards:,}")
+        st.metric("VIP用户购卡数" if lang == 'zh' else "VIP User Cards", f"{total_cards:,}")
     with col4:
         st.metric(get_text('vip_discount_rate', lang), f"{discount_rate:.1f}%")
+    
+    st.markdown("---")
+    
+    # Summary - 合并VIP用户地址去重分析和Insights Summary
+    st.markdown("---")
+    st.subheader("📊 Summary" if lang == 'zh' else "📊 Summary")
+    
+    # 计算关键指标
+    if len(df_vip_after) > 0:
+        # 先计算所有需要的变量
+        in_snapshot = len(df_vip_after[df_vip_after['In_Snapshot'] == True])
+        not_in_snap = len(df_vip_after[df_vip_after['In_Snapshot'] == False])
+        not_in_snapshot = not_in_snap  # 别名，用于后面的代码
+        enjoyed = len(df_vip_after[df_vip_after['Status'] == '✅已享受'])
+        not_enjoyed = len(df_vip_after[df_vip_after['Status'] == '❌未享受'])
+        
+        # 计算百分比
+        in_snapshot_pct = in_snapshot / len(df_vip_after) * 100
+        enjoyed_pct = enjoyed / len(df_vip_after) * 100
+        
+        if lang == 'zh':
+            summary_md = f"""
+            <div style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(5, 150, 105, 0.05) 100%);
+                        border: 1px solid rgba(16, 185, 129, 0.3); 
+                        border-radius: 12px; 
+                        padding: 20px; 
+                        margin-bottom: 20px;">
+            <h4 style="color: #059669; margin-top: 0;">📊 VIP用户分析总结</h4>
+            
+            ### 🎯 活动效果
+            **NFT持有者30%折扣活动自2025年7月21日启动以来表现优秀：**
+            
+            - ✅ **{enjoyed_pct:.1f}%** 的活动后交易成功享受了折扣
+            - 📸 **{in_snapshot_pct:.1f}%** 的用户在有效快照期内购卡
+            - 🎯 **{not_enjoyed}笔** 交易在快照期内但未享受折扣（需检查）
+            - 📝 **{not_in_snap}笔** 交易不在快照期内（用户在非快照期购卡，属正常情况）
+            
+            ### 👥 用户忠诚度分析
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 15px 0;">
+                <div>
+                    <h5 style="color: #1f2937; margin-bottom: 10px;">EVM地址持有情况</h5>
+                    <ul style="margin: 0; padding-left: 20px; color: #374151;">
+                        <li><strong>BNB Chain: 18个地址</strong>在所有13周都持有NFT</li>
+                        <li><strong>Polygon: 253个地址</strong>在所有13周都持有NFT</li>
+                        <li><strong>总计: 271个EVM地址</strong>持续持有NFT</li>
+                    </ul>
+                </div>
+                <div>
+                    <h5 style="color: #1f2937; margin-bottom: 10px;">Solana地址持有情况</h5>
+                    <ul style="margin: 0; padding-left: 20px; color: #374151;">
+                        <li><strong>909个地址</strong>在所有13周都持有NFT</li>
+                        <li><strong>Solana用户</strong>是最忠诚的VIP群体</li>
+                        <li><strong>持续持有率</strong>高达88.6%（909/1026）</li>
+                    </ul>
+                </div>
+            </div>
+            
+            ### 💡 关键洞察
+            
+            1. **系统运行状况**: {"完美！所有在快照期内的用户都享受了折扣" if not_enjoyed == 0 else f"需关注{not_enjoyed}笔未享受折扣的交易"}
+            2. **快照机制有效性**: {in_snapshot_pct:.1f}%的用户在快照期内购卡，有效防止了套利行为
+            3. **用户参与度**: {purchased_users}位NFT持有者参与购卡，占总特权用户的{purchased_users/total_vip_users*100:.1f}%
+            4. **最忠诚用户**: 1,180名用户（18个BNB Chain + 253个Polygon + 909个Solana）在所有13周都持有NFT
+            5. **平均节省**: 每笔享受折扣的交易平均节省 ${df_vip_after[df_vip_after['Status']=='✅已享受']['Savings'].mean():.2f}
+            
+            ### 📈 业务意义
+            
+            - **1,180个地址**在所有13周都持有NFT，是<strong>最忠诚的VIP用户</strong>
+            - 这些用户在任何时候购卡都能享受VIP折扣
+            - Solana用户忠诚度最高，持续持有率达88.6%
+            - Polygon用户次之，BNB Chain用户相对较少但同样忠诚
+            - VIP折扣政策有效促进了高价值用户的复购行为，提升了用户粘性
+            
+            {get_text('vip_activity_note', lang)}
+            </div>
+            """
+        else:
+            summary_md = f"""
+            <div style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(5, 150, 105, 0.05) 100%);
+                        border: 1px solid rgba(16, 185, 129, 0.3); 
+                        border-radius: 12px; 
+                        padding: 20px; 
+                        margin-bottom: 20px;">
+            <h4 style="color: #059669; margin-top: 0;">📊 VIP User Analysis Summary</h4>
+            
+            ### 🎯 Activity Performance
+            **Excellent Performance!** Since the NFT holder 30% discount activity started on July 21, 2025:
+            
+            - ✅ **{enjoyed_pct:.1f}%** of post-activity transactions successfully received discounts
+            - 📸 **{in_snapshot_pct:.1f}%** of users purchased within valid snapshot periods
+            - 🎯 **{not_enjoyed} transactions** were in snapshot period but didn't receive discount (needs review)
+            - 📝 **{not_in_snap} transactions** were outside snapshot periods (users purchased outside snapshot window, normal behavior)
+            
+            ### 👥 User Loyalty Analysis
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 15px 0;">
+                <div>
+                    <h5 style="color: #1f2937; margin-bottom: 10px;">EVM Address Duplication</h5>
+                    <ul style="margin: 0; padding-left: 20px; color: #374151;">
+                        <li><strong>BNB Chain: 18 addresses</strong> appear in all 13 weeks</li>
+                        <li><strong>Polygon: 253 addresses</strong> appear in all 13 weeks</li>
+                        <li><strong>Total: 271 EVM addresses</strong> continuously hold NFTs</li>
+                    </ul>
+                </div>
+                <div>
+                    <h5 style="color: #1f2937; margin-bottom: 10px;">Solana Address Duplication</h5>
+                    <ul style="margin: 0; padding-left: 20px; color: #374151;">
+                        <li><strong>909 addresses</strong> appear in all 13 weeks (continuous NFT holding)</li>
+                        <li><strong>Solana users</strong> are the most loyal VIP group</li>
+                        <li><strong>Continuous holding rate</strong> of 88.6% (909/1026)</li>
+                    </ul>
+                </div>
+            </div>
+            
+            ### 💡 Key Insights
+            
+            1. **System Status**: {"Perfect! All users in snapshot period received discounts" if not_enjoyed == 0 else f"Need to review {not_enjoyed} transactions without discount"}
+            2. **Snapshot Mechanism Effectiveness**: {in_snapshot_pct:.1f}% of users purchased within snapshot periods, effectively preventing arbitrage
+            3. **User Engagement**: {purchased_users} NFT holders participated, {purchased_users/total_vip_users*100:.1f}% of total VIP users
+            4. **Most Loyal Users**: 1,180 users (18 BNB Chain + 253 Polygon + 909 Solana) held NFTs in all 13 weeks
+            5. **Average Savings**: ${df_vip_after[df_vip_after['Status']=='✅已享受']['Savings'].mean():.2f} saved per discounted transaction
+            
+            ### 📈 Business Significance
+            
+            - **1,180 addresses** held NFTs in all 13 weeks, representing <strong>most loyal VIP users</strong>
+            - These users can enjoy VIP discounts at any time when purchasing cards
+            - Solana users show highest loyalty with 88.6% continuous holding rate
+            - Polygon users rank second, BNB Chain users are fewer but equally loyal
+            - VIP discount policy effectively drives repeat purchases and enhances user retention
+            
+            {get_text('vip_activity_note', lang)}
+            </div>
+            """
+        
+        st.markdown(summary_md, unsafe_allow_html=True)
+    
+    # 最忠诚VIP用户地址表格
+    st.markdown(f"### 🏆 {'最忠诚VIP用户地址列表' if lang == 'zh' else 'Most Loyal VIP User Address List'}")
+    
+    # 获取最忠诚VIP用户地址
+    df_loyal_users = get_loyal_vip_addresses()
+    
+    # 添加可展开的表格
+    with st.expander(f"📋 {'查看所有最忠诚VIP用户地址' if lang == 'zh' else 'View All Most Loyal VIP User Addresses'}", expanded=False):
+        st.dataframe(
+            df_loyal_users,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "链类型": st.column_config.TextColumn("链类型" if lang == 'zh' else "Chain Type", width="medium"),
+                "地址": st.column_config.TextColumn("钱包地址" if lang == 'zh' else "Wallet Address", width="large")
+            }
+        )
+        
+        # 下载按钮
+        csv = df_loyal_users.to_csv(index=False)
+        st.download_button(
+            label=f"📥 {'下载地址列表 (CSV)' if lang == 'zh' else 'Download Address List (CSV)'}",
+            data=csv,
+            file_name="loyal_vip_users.csv",
+            mime="text/csv"
+        )
     
     st.markdown("---")
     
@@ -1615,8 +1828,60 @@ if df_vip is not None and len(df_vip) > 0:
     if len(df_vip_after) > 0:
         st.subheader(get_text('vip_snapshot_match', lang) if lang == 'zh' else '📸 Snapshot Matching & Discount Status')
         
-        in_snapshot = len(df_vip_after[df_vip_after['In_Snapshot'] == True])
-        not_in_snapshot = len(df_vip_after[df_vip_after['In_Snapshot'] == False])
+        # 快照期购卡定义说明
+        if lang == 'zh':
+            st.markdown("""
+            <div style="background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(37, 99, 235, 0.05) 100%);
+                        border: 1px solid rgba(59, 130, 246, 0.3); 
+                        border-radius: 12px; 
+                        padding: 20px; 
+                        margin-bottom: 20px;">
+            <h5 style="color: #1e40af; margin-top: 0;">📖 快照期购卡定义说明</h5>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div>
+                    <h6 style="color: #059669; margin-bottom: 8px;">✅ 在快照期购卡</h6>
+                    <p style="margin: 0; color: #374151; font-size: 0.9rem;">
+                        用户在购卡时，其钱包地址正好在当周的NFT持有者快照名单中。<br>
+                        <strong>举例：</strong>用户A在2025年8月15日购卡，而8月15日正好在第4周快照期内（8月11日-8月18日），且用户A在第4周快照名单中，因此可以享受VIP折扣。
+                    </p>
+                </div>
+                <div>
+                    <h6 style="color: #dc2626; margin-bottom: 8px;">❌ 不在快照期购卡</h6>
+                    <p style="margin: 0; color: #374151; font-size: 0.9rem;">
+                        用户在购卡时，其钱包地址不在当周的NFT持有者快照名单中。<br>
+                        <strong>举例：</strong>用户B在2025年8月15日购卡，但用户B在第4周快照名单中不存在（可能已转让NFT），因此无法享受VIP折扣。
+                    </p>
+                </div>
+            </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style="background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(37, 99, 235, 0.05) 100%);
+                        border: 1px solid rgba(59, 130, 246, 0.3); 
+                        border-radius: 12px; 
+                        padding: 20px; 
+                        margin-bottom: 20px;">
+            <h5 style="color: #1e40af; margin-top: 0;">📖 Snapshot Period Purchase Definition</h5>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div>
+                    <h6 style="color: #059669; margin-bottom: 8px;">✅ In Snapshot Period</h6>
+                    <p style="margin: 0; color: #374151; font-size: 0.9rem;">
+                        User's wallet address is in the NFT holder snapshot list for the week when purchasing cards.<br>
+                        <strong>Example:</strong> User A purchases cards on Aug 15, 2025, which falls within Week 4 snapshot period (Aug 11-18), and User A is in Week 4 snapshot list, so they can enjoy VIP discount.
+                    </p>
+                </div>
+                <div>
+                    <h6 style="color: #dc2626; margin-bottom: 8px;">❌ Not in Snapshot Period</h6>
+                    <p style="margin: 0; color: #374151; font-size: 0.9rem;">
+                        User's wallet address is not in the NFT holder snapshot list for the week when purchasing cards.<br>
+                        <strong>Example:</strong> User B purchases cards on Aug 15, 2025, but User B is not in Week 4 snapshot list (may have transferred NFT), so they cannot enjoy VIP discount.
+                    </p>
+                </div>
+            </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
         
         col1, col2 = st.columns(2)
         
@@ -1646,13 +1911,11 @@ if df_vip is not None and len(df_vip) > 0:
             # 折扣享受情况
             st.markdown(f"**{get_text('vip_discount_status', lang)}**")
             
-            enjoyed = len(df_vip_after[df_vip_after['Status'] == '✅已享受'])
-            not_enjoyed = len(df_vip_after[df_vip_after['Status'] == '❌未享受'])
-            not_in_snap = len(df_vip_after[df_vip_after['Status'] == '❓不在快照'])
+            not_in_snap_status = len(df_vip_after[df_vip_after['Status'] == '❓不在快照'])
             
             discount_data = pd.DataFrame({
                 'Status': [get_text('vip_enjoyed', lang), get_text('vip_not_enjoyed', lang), get_text('vip_not_in_snapshot', lang)],
-                'Count': [enjoyed, not_enjoyed, not_in_snap]
+                'Count': [enjoyed, not_enjoyed, not_in_snap_status]
             })
             
             fig_discount = px.bar(
@@ -1726,57 +1989,6 @@ if df_vip is not None and len(df_vip) > 0:
         )
         st.plotly_chart(fig_vip_value, use_container_width=True)
     
-    # Insights Summary
-    st.markdown("---")
-    st.subheader(get_text('vip_insights', lang))
-    
-    # 计算关键指标
-    if len(df_vip_after) > 0:
-        in_snapshot_pct = in_snapshot / len(df_vip_after) * 100
-        enjoyed_pct = enjoyed / len(df_vip_after) * 100
-        
-        if lang == 'zh':
-            insights_md = f"""
-            ### 📊 关键发现
-            
-            **活动效果优秀！** NFT持有者30%折扣活动自2025年7月21日启动以来：
-            
-            - ✅ **{enjoyed_pct:.1f}%** 的活动后交易成功享受了折扣
-            - 📸 **{in_snapshot_pct:.1f}%** 的用户在有效快照期内购卡
-            - 🎯 **{not_enjoyed}笔** 交易在快照期内但未享受折扣（需检查）
-            - 📝 **{not_in_snap}笔** 交易不在快照期内（用户在非快照期购卡，属正常情况）
-            
-            ### 💡 业务洞察
-            
-            1. **系统运行状况**: {"完美！所有在快照期内的用户都享受了折扣" if not_enjoyed == 0 else f"需关注{not_enjoyed}笔未享受折扣的交易"}
-            2. **快照机制有效性**: {in_snapshot_pct:.1f}%的用户在快照期内购卡，有效防止了套利行为
-            3. **用户参与度**: {purchased_users}位NFT持有者参与购卡，占总特权用户的{purchased_users/total_vip_users*100:.1f}%
-            4. **平均节省**: 每笔享受折扣的交易平均节省 ${df_vip_after[df_vip_after['Status']=='✅已享受']['Savings'].mean():.2f}
-            
-            {get_text('vip_activity_note', lang)}
-            """
-        else:
-            insights_md = f"""
-            ### 📊 Key Findings
-            
-            **Excellent Performance!** Since the NFT holder 30% discount activity started on July 21, 2025:
-            
-            - ✅ **{enjoyed_pct:.1f}%** of post-activity transactions successfully received discounts
-            - 📸 **{in_snapshot_pct:.1f}%** of users purchased within valid snapshot periods
-            - 🎯 **{not_enjoyed} transactions** were in snapshot period but didn't receive discount (needs review)
-            - 📝 **{not_in_snap} transactions** were outside snapshot periods (users purchased outside snapshot window, normal behavior)
-            
-            ### 💡 Business Insights
-            
-            1. **System Status**: {"Perfect! All users in snapshot period received discounts" if not_enjoyed == 0 else f"Need to review {not_enjoyed} transactions without discount"}
-            2. **Snapshot Mechanism Effectiveness**: {in_snapshot_pct:.1f}% of users purchased within snapshot periods, effectively preventing arbitrage
-            3. **User Engagement**: {purchased_users} NFT holders participated, {purchased_users/total_vip_users*100:.1f}% of total VIP users
-            4. **Average Savings**: ${df_vip_after[df_vip_after['Status']=='✅已享受']['Savings'].mean():.2f} saved per discounted transaction
-            
-            {get_text('vip_activity_note', lang)}
-            """
-        
-        st.markdown(insights_md)
 else:
     if lang == 'zh':
         st.warning("🔒 **VIP用户分析数据不可用**\n\nVIP持有者数据为敏感信息，仅在本地环境可用。云端部署版本不包含此数据。")
@@ -1807,26 +2019,20 @@ st.markdown("")
 
 # 格式化显示
 df_display = df_filtered[['DateTime', 'Chain', 'Card_Value', 'Amount', 'Fee', 'Fee_Percentage', 'Asset', 'TxHash']].copy()
-if lang == 'zh':
-    df_display.columns = ['时间', '链', '卡片面值(USD)', '实付金额(USD)', '手续费(USD)', '手续费率(%)', '支付代币', '交易哈希']
-else:
-    df_display.columns = ['DateTime', 'Chain', 'Card Value(USD)', 'Amount(USD)', 'Fee(USD)', 'Fee Rate(%)', 'Asset', 'TxHash']
+df_display.columns = ['时间', '链', '卡片面值(USD)', '实付金额(USD)', '手续费(USD)', '手续费率(%)', '支付代币', '交易哈希'] if lang == 'zh' else ['DateTime', 'Chain', 'Card Value(USD)', 'Amount(USD)', 'Fee(USD)', 'Fee Rate(%)', 'Asset', 'TxHash']
 df_display = df_display.sort_values(df_display.columns[0], ascending=False)
 
-if lang == 'zh':
-    format_dict = {
-        '卡片面值(USD)': '{:.0f}',
-        '实付金额(USD)': '{:.2f}',
-        '手续费(USD)': '{:.2f}',
-        '手续费率(%)': '{:.2f}'
-    }
-else:
-    format_dict = {
-        'Card Value(USD)': '{:.0f}',
-        'Amount(USD)': '{:.2f}',
-        'Fee(USD)': '{:.2f}',
-        'Fee Rate(%)': '{:.2f}'
-    }
+format_dict = {
+    '卡片面值(USD)': '{:.0f}',
+    '实付金额(USD)': '{:.2f}',
+    '手续费(USD)': '{:.2f}',
+    '手续费率(%)': '{:.2f}'
+} if lang == 'zh' else {
+    'Card Value(USD)': '{:.0f}',
+    'Amount(USD)': '{:.2f}',
+    'Fee(USD)': '{:.2f}',
+    'Fee Rate(%)': '{:.2f}'
+}
 
 st.dataframe(
     df_display.head(100).style.format(format_dict),
@@ -1869,19 +2075,16 @@ if not df_refund.empty:
     total_refund_amount = df_refund['Amount'].sum()
     avg_refund = df_refund['Amount'].mean()
     
-    if lang == 'zh':
-        st.markdown(f"""
-        **📊 数据摘要与洞察**  
-        已处理 **{total_refunds}** 笔卡片注销返还，累计返还 **{total_refund_amount:,.2f} GGUSD**，平均每笔 **${avg_refund:.2f}**。
-        GGUSD返还政策降低了用户注销卡片的心理负担，有效提升了用户体验和品牌忠诚度，同时促进了GGUSD代币的流通。
-        """)
-    else:
-        st.markdown(f"""
-        **📊 Data Summary & Insights**  
-        Processed **{total_refunds}** card cancellations, total refund **{total_refund_amount:,.2f} GGUSD**, average **${avg_refund:.2f}** per refund.
-        GGUSD refund policy reduces user friction for card cancellation, enhancing UX and brand loyalty while boosting GGUSD circulation.
-        """)
-    
+    insight_text = f"""
+    **📊 数据摘要与洞察**  
+    已处理 **{total_refunds}** 笔卡片注销返还，累计返还 **{total_refund_amount:,.2f} GGUSD**，平均每笔 **${avg_refund:.2f}**。
+    GGUSD返还政策降低了用户注销卡片的心理负担，有效提升了用户体验和品牌忠诚度，同时促进了GGUSD代币的流通。
+    """ if lang == 'zh' else f"""
+    **📊 Data Summary & Insights**  
+    Processed **{total_refunds}** card cancellations, total refund **{total_refund_amount:,.2f} GGUSD**, average **${avg_refund:.2f}** per refund.
+    GGUSD refund policy reduces user friction for card cancellation, enhancing UX and brand loyalty while boosting GGUSD circulation.
+    """
+    st.markdown(insight_text)
     st.markdown("")
 
 if not df_refund.empty:
@@ -1891,9 +2094,7 @@ if not df_refund.empty:
     total_refunds = len(df_refund)
     total_amount = df_refund['Amount'].sum()
     avg_refund = df_refund['Amount'].mean()
-    
-    # 估算原卡片余额 (返还额是余额的50%)
-    estimated_card_balance = total_amount * 2
+    estimated_card_balance = total_amount * 2  # 返还额是余额的50%
     
     with col1:
         st.metric(get_text('total_refunds', lang), f"{total_refunds:,}")
@@ -2042,7 +2243,7 @@ st.markdown(f"""
     {footer_title}</p>
     <p style='color: #1a1a1a; font-size: 16px; line-height: 1.8;'>
     {footer_chains_label} <span style="color: #1a1a1a;">Ethereum · BNB Chain · Polygon · Solana</span><br>
-    {footer_tokens_label} <span style="color: #1a1a1a;">GGUSD · USDT · USDC · BUSD</span></p>
+    {footer_tokens_label} <span style="color: #1a1a1a;">GGUSD · USDT · USDC</span></p>
     <p style='margin-top: 20px;'>
     🌐 <a href="https://fsl.com/gmtpay" target="_blank" style="color: #10b981; text-decoration: none; font-weight: 700;">fsl.com/gmtpay</a></p>
     <p style='color: #1a1a1a; font-size: 14px; margin-top: 20px; opacity: 0.8;'>

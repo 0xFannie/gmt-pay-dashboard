@@ -47,6 +47,10 @@ def load_vip_users():
             df = pd.read_csv(file, sep='\t', header=None, names=['contract', 'chain', 'token_or_holder', 'holder_or_asset'])
             
             for _, row in df.iterrows():
+                # 检查是否有空值
+                if pd.isna(row['chain']) or pd.isna(row['holder_or_asset']):
+                    continue
+                    
                 chain = str(row['chain']).lower().strip()
                 
                 if chain == 'sol':
@@ -159,6 +163,13 @@ def analyze_vip_purchases():
     
     # 合并所有特权用户的交易
     df_vip = pd.concat([df_evm_vip, df_sol_vip], ignore_index=True)
+    
+    # 只保留inflow交易（转入交易）
+    df_vip = df_vip[df_vip['Direction'] == 'inflow'].copy()
+    
+    # 只保留使用支持代币的交易（USDC, USDT, GGUSD）
+    supported_tokens = ['USDC', 'USDT', 'GGUSD']
+    df_vip = df_vip[df_vip['Asset'].isin(supported_tokens)].copy()
     
     # 添加卡片面值
     df_vip['Card_Value'] = df_vip['Amount'].apply(determine_card_value)

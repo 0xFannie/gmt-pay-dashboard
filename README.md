@@ -14,7 +14,7 @@ Real-time monitoring and analytics dashboard for GMT Pay card sales, supporting 
 
 **Data Analytics**
 - **Multi-Chain Support**: Ethereum, BNB Chain, Polygon, Solana
-- **Multi-Token**: USDC, USDT (all chains), GGUSD (BNB/Polygon), BUSD (BNB)
+- **Multi-Token**: USDC, USDT (all chains), GGUSD (BNB/Polygon/Solana)
 - **Real-time Data**: Automatic on-chain transaction fetching
 - **Visualizations**: Sales trends, chain distribution, time series analysis
 - **User Analytics**: Holder behavior tracking and statistics
@@ -77,9 +77,9 @@ gmt-pay-dashboard/
 | Blockchain | Supported Tokens |
 |-----------|-----------------|
 | 🔵 Ethereum | USDC, USDT |
-| 🟡 BNB Chain | USDC, USDT, GGUSD, BUSD |
+| 🟡 BNB Chain | USDC, USDT, GGUSD |
 | 🟣 Polygon | USDC, USDT, GGUSD |
-| 🌈 Solana | USDC, USDT |
+| 🌈 Solana | USDC, USDT, GGUSD |
 
 ### 📍 Monitored Wallet Addresses
 
@@ -92,7 +92,7 @@ All data is fetched from the following public on-chain wallet addresses:
 
 **Solana Chain**:
 ```
-G7bMBQegH3RyRjt2QZu3o6BA2ZQQ7shdJ7zGrw7PwNEL
+G7bMBQegH3RyRjt1QZu3o6BA2ZQQ7shdJ7zGrw7PwNEL
 ```
 
 **Polygon Refund Address**:
@@ -166,7 +166,7 @@ GMT Pay卡片销售数据实时监控看板，支持多链、多代币数据聚�
 
 **数据分析**
 - **多链支持**: Ethereum、BNB Chain、Polygon、Solana
-- **多代币**: USDC、USDT（所有链）、GGUSD（BNB/Polygon）、BUSD（BNB）
+- **多代币**: USDC、USDT（所有链）、GGUSD（BNB/Polygon/Solana）
 - **实时数据**: 自动从区块链抓取交易数据
 - **可视化图表**: 销售趋势、链上分布、时间序列分析
 - **用户分析**: 持有者行为追踪和统计
@@ -229,9 +229,9 @@ gmt-pay-dashboard/
 | 区块链 | 支持代币 |
 |-------|---------|
 | 🔵 Ethereum | USDC, USDT |
-| 🟡 BNB Chain | USDC, USDT, GGUSD, BUSD |
+| 🟡 BNB Chain | USDC, USDT, GGUSD |
 | 🟣 Polygon | USDC, USDT, GGUSD |
-| 🌈 Solana | USDC, USDT |
+| 🌈 Solana | USDC, USDT, GGUSD |
 
 ### 📍 监控的钱包地址
 
@@ -244,7 +244,7 @@ gmt-pay-dashboard/
 
 **Solana链**:
 ```
-G7bMBQegH3RyRjt2QZu3o6BA2ZQQ7shdJ7zGrw7PwNEL
+G7bMBQegH3RyRjt1QZu3o6BA2ZQQ7shdJ7zGrw7PwNEL
 ```
 
 **Polygon退款地址**:
