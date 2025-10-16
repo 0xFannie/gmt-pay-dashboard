@@ -908,8 +908,9 @@ if df.empty:
 # 显示数据信息
 cache_file = 'chain_data_cache.csv'
 if os.path.exists(cache_file):
+    # 显示文件缓存年龄，但说明这是数据源的最后更新时间
     cache_age = (datetime.now().timestamp() - os.path.getmtime(cache_file)) / 60
-    status_text = f"📊 数据状态\n\n缓存时间: {cache_age:.1f} 分钟前\n\n总记录: {len(df)} 条" if lang == 'zh' else f"📊 Data Status\n\nCached: {cache_age:.1f} min ago\n\nTotal records: {len(df)}"
+    status_text = f"📊 数据状态\n\n数据源更新: {cache_age:.1f} 分钟前\n\n总记录: {len(df)} 条\n\n💡 界面每30分钟自动刷新" if lang == 'zh' else f"📊 Data Status\n\nData source updated: {cache_age:.1f} min ago\n\nTotal records: {len(df)}\n\n💡 Auto-refresh every 30 min"
     st.sidebar.info(status_text)
 
 # 过滤出有效卡片（能识别出面值的）
